@@ -1,0 +1,105 @@
+# ========================
+# FE (Node.js / React / Vite)
+# ========================
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+FE/node_modules/
+
+# Environment variables — KHÔNG commit file .env thật
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+# .env.example KHÔNG ignore — cần commit để hướng dẫn team
+
+# ========================
+# BE (Python / Django)
+# ========================
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+backend/staticfiles/
+backend/media/
+
+# Django migrations (tuỳ team — thường nên commit migrations)
+# backend/**/migrations/*.py  ← bỏ comment nếu không muốn commit
+
+# ========================
+# Database
+# ========================
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+backend/db.sqlite3
+
+# ========================
+# Logs
+# ========================
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ========================
+# IDE / Editor
+# ========================
+.vscode/settings.json
+.vscode/launch.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
+Thumbs.db
+
+# ========================
+# Android / Capacitor (APK build)
+# ========================
+android/
+ios/
+.capacitor/
+
+# ========================
+# Testing / Coverage
+# ========================
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# ========================
+# OS
+# ========================
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# ========================
+# Misc
+# ========================
+*.zip
+*.tar.gz
+*.bak
+*.tmp
+.cache/
+tmp/
+
+
+# trong .gitignore đã có:
+.venv/  
