@@ -1,0 +1,25 @@
+services:
+
+  db:
+    image: postgres:15
+    container_name: smart_home_db
+    environment:
+      POSTGRES_DB: smarthome
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+    ports:
+      - "5432:5432"
+
+  backend:
+    build: .
+    container_name: smart_home_backend
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - ./backend:/app
+    working_dir: /app
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      - db
