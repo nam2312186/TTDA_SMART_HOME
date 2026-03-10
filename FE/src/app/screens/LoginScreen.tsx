@@ -30,13 +30,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess, onNavi
     }
   };
 
-  const handleDemoLogin = () => {
-    const success = login('user@smarthome.com', 'demo');
-    if (success) {
-      onLoginSuccess();
-    }
-  };
-
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-blue-50 to-white p-6">
       <div className="w-full max-w-sm">
@@ -109,18 +102,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess, onNavi
               </button>
             </div>
           </div>
-        </div>
-
-        {/* Demo Shortcut */}
-        <div className="mt-6 space-y-3">
-          <p className="text-sm text-gray-600 text-center font-medium">Quick Demo Access:</p>
-          <Button
-            onClick={handleDemoLogin}
-            variant="outline"
-            className="w-full"
-          >
-            Sign in as User
-          </Button>
         </div>
 
         {/* App info */}

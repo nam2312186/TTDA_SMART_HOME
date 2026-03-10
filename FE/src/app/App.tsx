@@ -20,7 +20,11 @@ import { RoomDevicesScreen } from './screens/RoomDevicesScreen';
 import { AddDeviceScreen } from './screens/AddDeviceScreen';
 import { EditDeviceScreen } from './screens/EditDeviceScreen';
 import { DeleteDeviceConfirmScreen } from './screens/DeleteDeviceConfirmScreen';
+import { AdminManageUsersScreen } from './screens/admin/AdminManageUsersScreen';
+import { RoomPermissionsScreen } from './screens/admin/RoomPermissionsScreen';
+import { AdminManageDevicesScreen } from './screens/admin/AdminManageDevicesScreen';
 import { Device, Alert, Schedule } from './types';
+import { Toaster } from './components/ui/sonner';
 
 type AuthScreen =
   | { type: 'splash' }
@@ -44,7 +48,10 @@ type Screen =
   | { type: 'roomDevices'; roomId: string; roomName: string }
   | { type: 'addDevice'; roomId: string; roomName: string }
   | { type: 'editDevice'; device: Device; roomName: string }
-  | { type: 'deleteDeviceConfirm'; device: Device; roomName: string };
+  | { type: 'deleteDeviceConfirm'; device: Device; roomName: string }
+  | { type: 'manageUsers' }
+  | { type: 'roomPermissions' }
+  | { type: 'manageDevices' };
 
 function MainApp() {
   const { currentUser, logout } = useApp();
@@ -134,6 +141,15 @@ function MainApp() {
           device: data.device,
           roomName: data.roomName,
         };
+        break;
+      case 'manageUsers':
+        newScreen = { type: 'manageUsers' };
+        break;
+      case 'roomPermissions':
+        newScreen = { type: 'roomPermissions' };
+        break;
+      case 'manageDevices':
+        newScreen = { type: 'manageDevices' };
         break;
       default:
         return;
@@ -326,6 +342,17 @@ function MainApp() {
             }}
           />
         )}
+        {currentScreen.type === 'manageUsers' && (
+          <AdminManageUsersScreen onBack={handleBack} onNavigate={handleNavigate} />
+        )}
+        {currentScreen.type === 'roomPermissions' && (
+          <RoomPermissionsScreen
+            onBack={handleBack}
+          />
+        )}
+        {currentScreen.type === 'manageDevices' && (
+          <AdminManageDevicesScreen onBack={handleBack} />
+        )}
       </div>
 
       {/* Bottom Navigation */}
@@ -340,6 +367,7 @@ export default function App() {
   return (
     <AppProvider>
       <MainApp />
+      <Toaster />
     </AppProvider>
   );
 }

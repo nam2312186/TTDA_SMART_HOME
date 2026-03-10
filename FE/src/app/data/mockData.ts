@@ -1,5 +1,5 @@
 // Mock data for the Smart Home app
-import { Floor, Room, Device, Alert, Schedule, HistoryLog, User, Home } from '../types';
+import { Floor, Room, Device, Alert, Schedule, HistoryLog, User, Home, AuditLog } from '../types';
 
 // Generate time series data for sensors
 const generateHistory = (baseValue: number, variance: number, points: number = 24) => {
@@ -17,11 +17,32 @@ export const mockHomes: Home[] = [
 export const mockUsers: User[] = [
   {
     id: 'u1',
-    name: 'John Doe',
-    email: 'user@smarthome.com',
+    name: 'Admin User',
+    email: 'admin@smarthome.com',
+    role: 'admin',
     homeId: 'home1',
     createdAt: new Date('2024-01-01'),
     lastActive: new Date(),
+  },
+  {
+    id: 'u2',
+    name: 'John Doe',
+    email: 'user@smarthome.com',
+    role: 'user',
+    homeId: 'home1',
+    roomPermissions: ['r1', 'r2', 'r5'], // Living Room, Kitchen, Master Bedroom
+    createdAt: new Date('2024-01-15'),
+    lastActive: new Date(),
+  },
+  {
+    id: 'u3',
+    name: 'Jane Smith',
+    email: 'jane@smarthome.com',
+    role: 'user',
+    homeId: 'home1',
+    roomPermissions: ['r8', 'r9'], // Home Office, Gym
+    createdAt: new Date('2024-02-01'),
+    lastActive: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
   },
 ];
 
@@ -622,6 +643,69 @@ export const mockHistoryLogs: HistoryLog[] = [
     action: 'off',
     details: 'Scheduled action executed: Evening Lights Off',
     userId: 'system',
+    homeId: 'home1',
+  },
+];
+
+export const mockAuditLogs: AuditLog[] = [
+  {
+    id: 'al1',
+    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000),
+    userId: 'u1',
+    userName: 'Admin User',
+    action: 'user_created',
+    entityType: 'user',
+    entityId: 'u3',
+    entityName: 'Jane Smith',
+    details: 'Created new user: Jane Smith (jane@smarthome.com) with role: user',
+    homeId: 'home1',
+  },
+  {
+    id: 'al2',
+    timestamp: new Date(Date.now() - 5 * 60 * 60 * 1000),
+    userId: 'u1',
+    userName: 'Admin User',
+    action: 'permissions_updated',
+    entityType: 'permissions',
+    entityId: 'u2',
+    entityName: 'John Doe',
+    details: 'Updated room permissions for John Doe: Living Room, Kitchen, Master Bedroom',
+    homeId: 'home1',
+  },
+  {
+    id: 'al3',
+    timestamp: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
+    userId: 'u1',
+    userName: 'Admin User',
+    action: 'device_created',
+    entityType: 'device',
+    entityId: 'd36',
+    entityName: 'Exhaust Fan',
+    details: 'Created device: Exhaust Fan (actuator/fan) in Gym',
+    homeId: 'home1',
+  },
+  {
+    id: 'al4',
+    timestamp: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+    userId: 'u1',
+    userName: 'Admin User',
+    action: 'device_updated',
+    entityType: 'device',
+    entityId: 'd31',
+    entityName: 'Ceiling Light',
+    details: 'Updated device: Ceiling Light',
+    homeId: 'home1',
+  },
+  {
+    id: 'al5',
+    timestamp: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
+    userId: 'u1',
+    userName: 'Admin User',
+    action: 'user_updated',
+    entityType: 'user',
+    entityId: 'u2',
+    entityName: 'John Doe',
+    details: 'Updated user: John Doe',
     homeId: 'home1',
   },
 ];
