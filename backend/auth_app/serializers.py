@@ -10,9 +10,11 @@ class RegisterSerializer(serializers.ModelSerializer):
         fields = ["username", "email", "password"]
 
     def create(self, validated_data):
-
         validated_data["password"] = make_password(validated_data["password"])
-
+        # Gán role mặc định 'user' nếu chưa có role nào
+        from users_app.models import Role
+        default_role, _ = Role.objects.get_or_create(role_name='user')
+        validated_data['role_id'] = default_role
         return User.objects.create(**validated_data)
 
 

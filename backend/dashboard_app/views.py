@@ -9,7 +9,7 @@ class DashboardSummaryView(APIView):
     """GET /api/dashboard/summary — Thống kê tổng quan hệ thống."""
     def get(self, request):
         total_devices = Device.objects.count()
-        devices_on = Device.objects.filter(is_on=True).count()
+        devices_on = Device.objects.filter(status=True).count()
         total_sensors = Sensor.objects.count()
         active_alerts = Alert.objects.filter(is_read=False).count()
 
@@ -20,6 +20,61 @@ class DashboardSummaryView(APIView):
             "total_sensors": total_sensors,
             "active_alerts": active_alerts,
         })
+
+
+class DashboardTemperatureView(APIView):
+    """GET /api/dashboard/temperature — Dữ liệu biểu đồ nhiệt độ (24h gần nhất)."""
+    def get(self, request):
+        sensors = Sensor.objects.filter(sensor_type='temperature').select_related('device')
+        result = []
+        for sensor in sensors:
+            records = SensorData.objects.filter(sensor=sensor).order_by('-recorded_at')[:24]
+            result.append({
+                "sensor_id": sensor.sensor_id,
+                "device_name": sensor.device.device_name,
+                "data": [
+                    {"value": r.value, "unit": r.unit, "recorded_at": r.recorded_at}
+                    for r in reversed(list(records))
+                ],
+            })
+        return Response(result)
+
+
+class DashboardHumidityView(APIView):
+    """GET /api/dashboard/humidity — Dữ liệu biểu đồ độ ẩm (24h gần nhất)."""
+    def get(self, request):
+        sensors = Sensor.objects.filter(sensor_type='humidity').select_related('device')
+        result = []
+        for sensor in sensors:
+            records = SensorData.objects.filter(sensor=sensor).order_by('-recorded_at')[:24]
+            result.append({
+                "sensor_id": sensor.sensor_id,
+                "device_name": sensor.device.device_name,
+                "data": [
+                    {"value": r.value, "unit": r.unit, "recorded_at": r.recorded_at}
+                    for r in reversed(list(records))
+                ],
+            })
+        return Response(result)
+
+
+class DashboardDeviceStatusView(APIView):
+    """GET /api/dashboard/device-status — Trạng thái tất cả thiết bị."""
+    def get(self, request):
+        devices = Device.objects.select_related('room').all()
+        result = [
+            {
+                "device_id": d.device_id,
+                "device_name": d.device_name,
+                "device_type": d.device_type,
+                "status": d.status,
+                "room": d.room.room_name if d.room else None,
+                "created_at": d.created_at,
+            }
+            for d in devices
+        ]
+        return Response(result)
+
 
 
 class DashboardTemperatureView(APIView):

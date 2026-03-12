@@ -1,3 +1,15 @@
 from django.contrib import admin
+from .models import Floor, Room
 
-# Register your models here.
+
+@admin.register(Floor)
+class FloorAdmin(admin.ModelAdmin):
+    list_display = ('floor_id', 'floor_name', 'user')
+    search_fields = ('floor_name',)
+
+
+@admin.register(Room)
+class RoomAdmin(admin.ModelAdmin):
+    list_display = ('room_id', 'room_name', 'floor', 'user')
+    list_filter = ('floor',)
+    search_fields = ('room_name',)

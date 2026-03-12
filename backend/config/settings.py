@@ -52,10 +52,14 @@ INSTALLED_APPS = [
     'dashboard_app',
     'rest_framework',
     'drf_spectacular',
+    'corsheaders',
+    'channels',
+    'iot_app',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -139,6 +143,34 @@ TIME_ZONE = 'UTC'
 REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
+
+# ─── ASGI / WebSocket ───────────────────────────────────────────
+ASGI_APPLICATION = 'config.asgi.application'
+
+# Channel layer: dùng InMemory khi dev (không cần Redis)
+# Khi deploy production: đổi sang RedisChannelLayer (bình luận bên dưới)
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        # Production với Redis:
+        # 'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        # 'CONFIG': {'hosts': [('127.0.0.1', 6379)]},
+    }
+}
+
+# ─── MQTT cấu hình (đánh dấu bằng .env) ────────────────────────
+MQTT_BROKER = os.environ.get('MQTT_BROKER', 'localhost')
+MQTT_PORT = int(os.environ.get('MQTT_PORT', 1883))
+MQTT_USERNAME = os.environ.get('MQTT_USERNAME', None)
+MQTT_PASSWORD = os.environ.get('MQTT_PASSWORD', None)
+MQTT_CLIENT_ID = os.environ.get('MQTT_CLIENT_ID', 'smarthome-django')
+
+# ─── CORS - cho phép FE (Vite dev server) gọi BE ───────────────
+CORS_ALLOWED_ORIGINS = [
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+]
+CORS_ALLOW_CREDENTIALS = True
 
 # drf-spectacular (Swagger)
 SPECTACULAR_SETTINGS = {
