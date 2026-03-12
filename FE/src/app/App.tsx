@@ -50,13 +50,13 @@ type Screen =
   | { type: 'editDevice'; device: Device; roomName: string }
   | { type: 'deleteDeviceConfirm'; device: Device; roomName: string }
   | { type: 'manageUsers' }
-  | { type: 'roomPermissions' }
+  | { type: 'roomPermissions'; userId?: string }
   | { type: 'manageDevices' };
 
 function MainApp() {
-  const { currentUser, logout } = useApp();
+  const { logout, loginContext } = useApp();
   const [authScreen, setAuthScreen] = useState<AuthScreen>({ type: 'splash' });
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(() => !!localStorage.getItem('user_id'));
   const [activeTab, setActiveTab] = useState<TabType>('home');
   const [screenStack, setScreenStack] = useState<Screen[]>([{ type: 'home' }]);
 
@@ -146,7 +146,7 @@ function MainApp() {
         newScreen = { type: 'manageUsers' };
         break;
       case 'roomPermissions':
-        newScreen = { type: 'roomPermissions' };
+        newScreen = { type: 'roomPermissions', userId: data?.userId };
         break;
       case 'manageDevices':
         newScreen = { type: 'manageDevices' };
@@ -190,6 +190,10 @@ function MainApp() {
 
   const handleLogout = () => {
     logout();
+    localStorage.removeItem('user_id');
+    localStorage.removeItem('username');
+    localStorage.removeItem('email');
+    localStorage.removeItem('role');
     setIsLoggedIn(false);
     setAuthScreen({ type: 'login' });
     setScreenStack([{ type: 'home' }]);
@@ -217,7 +221,7 @@ function MainApp() {
   }
 
   // Show auth screens if not logged in
-  if (!isLoggedIn || !currentUser) {
+  if (!isLoggedIn) {
     if (authScreen.type === 'register') {
       return (
         <RegisterScreen
@@ -235,7 +239,15 @@ function MainApp() {
 
     return (
       <LoginScreen
-        onLoginSuccess={() => setIsLoggedIn(true)}
+        onLoginSuccess={() => {
+          loginContext({
+            id: localStorage.getItem('user_id')!,
+            name: localStorage.getItem('username')!,
+            email: localStorage.getItem('email')!,
+            role: (localStorage.getItem('role') || 'user') as 'admin' | 'user',
+          });
+          setIsLoggedIn(true);
+        }}
         onNavigate={handleAuthNavigate}
       />
     );
@@ -348,6 +360,7 @@ function MainApp() {
         {currentScreen.type === 'roomPermissions' && (
           <RoomPermissionsScreen
             onBack={handleBack}
+            userId={currentScreen.userId}
           />
         )}
         {currentScreen.type === 'manageDevices' && (

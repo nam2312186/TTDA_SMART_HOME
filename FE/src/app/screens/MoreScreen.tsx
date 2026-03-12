@@ -22,7 +22,10 @@ export const MoreScreen: React.FC<MoreScreenProps> = ({
   onNavigate,
   onLogout,
 }) => {
-  const { currentUser, isAdmin } = useApp();
+  const { currentUser } = useApp();
+  const displayName = currentUser?.name || localStorage.getItem('username') || 'User';
+  const displayEmail = currentUser?.email || localStorage.getItem('email') || '';
+  const isAdmin = (currentUser?.role === 'admin') || localStorage.getItem('role') === 'admin';
 
   const generalMenuItems = [
     {
@@ -75,8 +78,8 @@ export const MoreScreen: React.FC<MoreScreenProps> = ({
             <User className="w-8 h-8 text-white" />
           </div>
           <div className="flex-1">
-            <h2 className="text-xl font-bold">{currentUser?.name}</h2>
-            <p className="text-sm text-blue-100">{currentUser?.email}</p>
+            <h2 className="text-xl font-bold">{displayName}</h2>
+            <p className="text-sm text-blue-100">{displayEmail}</p>
             {isAdmin && (
               <p className="text-xs text-blue-200 mt-1 font-medium">Administrator</p>
             )}

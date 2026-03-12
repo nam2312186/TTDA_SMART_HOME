@@ -3,7 +3,7 @@ import { Home, Lock, Mail } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import { useApp } from '../context/AppContext';
+import { authApi } from '../services/api';
 
 interface LoginScreenProps {
   onLoginSuccess: () => void;
@@ -14,19 +14,27 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess, onNavi
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const { login } = useApp();
+  const [loading, setLoading] = useState(false);
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     if (!email || !password) {
       setError('Please enter email and password');
       return;
     }
-
-    const success = login(email, password);
-    if (success) {
+    setError('');
+    setLoading(true);
+    try {
+      const res = await authApi.login({ username: email, password });
+      // Lưu thông tin user vào localStorage để dùng sau
+      localStorage.setItem('user_id', String(res.user_id));
+      localStorage.setItem('username', res.username);
+      localStorage.setItem('email', res.email);
+      localStorage.setItem('role', res.role || 'user');
       onLoginSuccess();
-    } else {
-      setError('Invalid email or password');
+    } catch (err: any) {
+      setError(err.status === 401 ? 'Invalid email or password' : 'Server error, please try again');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -82,8 +90,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess, onNavi
               </div>
             )}
 
-            <Button onClick={handleLogin} className="w-full" size="lg">
-              Sign In
+            <Button onClick={handleLogin} className="w-full" size="lg" disabled={loading}>
+              {loading ? 'Signing in...' : 'Sign In'}
             </Button>
 
             <div className="flex items-center gap-2">

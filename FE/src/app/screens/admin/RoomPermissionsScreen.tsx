@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { ChevronLeft, Save, User, Check } from 'lucide-react';
 import { Card, CardContent } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
@@ -11,48 +11,55 @@ import {
   SelectValue,
 } from '../../components/ui/select';
 import { useApp } from '../../context/AppContext';
+import { usersApi, permissionsApi } from '../../services/api';
 import { toast } from 'sonner';
 
 interface RoomPermissionsScreenProps {
   onBack: () => void;
+  userId?: string;
 }
 
 export const RoomPermissionsScreen: React.FC<RoomPermissionsScreenProps> = ({
   onBack,
+  userId: initialUserId,
 }) => {
-  const { users, floors, rooms, updateUserRoomPermissions } = useApp();
-  const [selectedUserId, setSelectedUserId] = useState<string>('');
+  const { floors, rooms } = useApp();
+  const [apiUsers, setApiUsers] = useState<any[]>([]);
+  const [selectedUserId, setSelectedUserId] = useState<string>(initialUserId || '');
   const [selectedRoomIds, setSelectedRoomIds] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
 
-  // Get non-admin users only
-  const regularUsers = users.filter((u) => u.role === 'user');
+  // Load all non-admin users
+  useEffect(() => {
+    usersApi.list().then((list: any[]) => {
+      setApiUsers(list.filter(u => (u.role_name || 'user') !== 'admin'));
+    }).catch(console.error);
+  }, []);
 
-  // Handle user selection
+  // Load permissions when userId changes
+  useEffect(() => {
+    if (!selectedUserId) return;
+    permissionsApi.getUserRooms(Number(selectedUserId)).then((perms) => {
+      setSelectedRoomIds(perms.map(p => String(p.room_id)));
+    }).catch(console.error);
+  }, [selectedUserId]);
+
   const handleUserSelect = (userId: string) => {
     setSelectedUserId(userId);
-    const user = users.find((u) => u.id === userId);
-    setSelectedRoomIds(user?.roomPermissions || []);
   };
 
-  // Toggle room selection
   const toggleRoom = (roomId: string) => {
     setSelectedRoomIds((prev) =>
-      prev.includes(roomId)
-        ? prev.filter((id) => id !== roomId)
-        : [...prev, roomId]
+      prev.includes(roomId) ? prev.filter((id) => id !== roomId) : [...prev, roomId]
     );
   };
 
-  // Toggle all rooms in a floor
   const toggleFloor = (floorId: string) => {
     const floorRoomIds = rooms.filter((r) => r.floorId === floorId).map((r) => r.id);
     const allSelected = floorRoomIds.every((id) => selectedRoomIds.includes(id));
-
     if (allSelected) {
-      // Deselect all rooms in this floor
       setSelectedRoomIds((prev) => prev.filter((id) => !floorRoomIds.includes(id)));
     } else {
-      // Select all rooms in this floor
       setSelectedRoomIds((prev) => [
         ...prev.filter((id) => !floorRoomIds.includes(id)),
         ...floorRoomIds,
@@ -60,28 +67,31 @@ export const RoomPermissionsScreen: React.FC<RoomPermissionsScreenProps> = ({
     }
   };
 
-  // Check if floor is fully selected
   const isFloorSelected = (floorId: string) => {
     const floorRoomIds = rooms.filter((r) => r.floorId === floorId).map((r) => r.id);
     return floorRoomIds.length > 0 && floorRoomIds.every((id) => selectedRoomIds.includes(id));
   };
 
-  // Check if floor is partially selected
   const isFloorPartiallySelected = (floorId: string) => {
     const floorRoomIds = rooms.filter((r) => r.floorId === floorId).map((r) => r.id);
     const selectedCount = floorRoomIds.filter((id) => selectedRoomIds.includes(id)).length;
     return selectedCount > 0 && selectedCount < floorRoomIds.length;
   };
 
-  // Save permissions
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!selectedUserId) return;
-    
-    updateUserRoomPermissions(selectedUserId, selectedRoomIds);
-    toast.success('Room permissions updated successfully');
+    setSaving(true);
+    try {
+      await permissionsApi.setUserRooms(Number(selectedUserId), selectedRoomIds.map(Number));
+      toast.success('Room permissions updated successfully');
+    } catch {
+      toast.error('Failed to save permissions');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const selectedUser = users.find((u) => u.id === selectedUserId);
+  const selectedUser = apiUsers.find((u) => String(u.user_id) === selectedUserId);
 
   return (
     <div className="h-full flex flex-col bg-gray-50">
@@ -93,9 +103,7 @@ export const RoomPermissionsScreen: React.FC<RoomPermissionsScreenProps> = ({
           </button>
           <div className="flex-1">
             <h1 className="text-lg font-bold">Room Permissions</h1>
-            <p className="text-xs text-blue-100">
-              Assign room access to users
-            </p>
+            <p className="text-xs text-blue-100">Assign room access to users</p>
           </div>
         </div>
 
@@ -107,11 +115,11 @@ export const RoomPermissionsScreen: React.FC<RoomPermissionsScreenProps> = ({
               <SelectValue placeholder="Choose a user" />
             </SelectTrigger>
             <SelectContent>
-              {regularUsers.map((user) => (
-                <SelectItem key={user.id} value={user.id}>
+              {apiUsers.map((user) => (
+                <SelectItem key={user.user_id} value={String(user.user_id)}>
                   <div className="flex items-center gap-2">
                     <User className="w-4 h-4" />
-                    <span>{user.name}</span>
+                    <span>{user.username}</span>
                     <span className="text-xs text-gray-500">({user.email})</span>
                   </div>
                 </SelectItem>
@@ -126,22 +134,8 @@ export const RoomPermissionsScreen: React.FC<RoomPermissionsScreenProps> = ({
         {!selectedUserId ? (
           <div className="text-center py-12">
             <User className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">
-              No User Selected
-            </h3>
-            <p className="text-sm text-gray-600">
-              Please select a user to manage their room permissions
-            </p>
-          </div>
-        ) : regularUsers.length === 0 ? (
-          <div className="text-center py-12">
-            <User className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">
-              No Users Found
-            </h3>
-            <p className="text-sm text-gray-600">
-              No regular users available. Create users first from Manage Users.
-            </p>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">No User Selected</h3>
+            <p className="text-sm text-gray-600">Select a user to manage their room permissions</p>
           </div>
         ) : (
           <div className="space-y-3">
@@ -154,12 +148,8 @@ export const RoomPermissionsScreen: React.FC<RoomPermissionsScreenProps> = ({
                       <User className="w-5 h-5 text-blue-600" />
                     </div>
                     <div className="flex-1">
-                      <div className="font-medium text-gray-900">
-                        {selectedUser.name}
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        {selectedRoomIds.length} room(s) selected
-                      </div>
+                      <div className="font-medium text-gray-900">{selectedUser.username}</div>
+                      <div className="text-sm text-gray-600">{selectedRoomIds.length} room(s) selected</div>
                     </div>
                   </div>
                 </CardContent>
@@ -170,21 +160,15 @@ export const RoomPermissionsScreen: React.FC<RoomPermissionsScreenProps> = ({
             {floors.map((floor) => {
               const floorRooms = rooms.filter((r) => r.floorId === floor.id);
               if (floorRooms.length === 0) return null;
-
               return (
                 <Card key={floor.id}>
                   <CardContent className="p-0">
-                    {/* Floor Header */}
                     <div className="flex items-center gap-3 p-4 border-b border-gray-100 bg-gray-50">
                       <Checkbox
                         id={`floor-${floor.id}`}
                         checked={isFloorSelected(floor.id)}
+                        data-partial={isFloorPartiallySelected(floor.id) || undefined}
                         onCheckedChange={() => toggleFloor(floor.id)}
-                        className={
-                          isFloorPartiallySelected(floor.id)
-                            ? 'data-[state=checked]:bg-blue-500'
-                            : ''
-                        }
                       />
                       <label
                         htmlFor={`floor-${floor.id}`}
@@ -196,27 +180,18 @@ export const RoomPermissionsScreen: React.FC<RoomPermissionsScreenProps> = ({
                         {floorRooms.filter((r) => selectedRoomIds.includes(r.id)).length} / {floorRooms.length}
                       </span>
                     </div>
-
-                    {/* Rooms */}
                     <div>
                       {floorRooms.map((room, index) => (
                         <div
                           key={room.id}
-                          className={`flex items-center gap-3 p-4 ${
-                            index !== floorRooms.length - 1
-                              ? 'border-b border-gray-100'
-                              : ''
-                          }`}
+                          className={`flex items-center gap-3 p-4 ${index !== floorRooms.length - 1 ? 'border-b border-gray-100' : ''}`}
                         >
                           <Checkbox
                             id={`room-${room.id}`}
                             checked={selectedRoomIds.includes(room.id)}
                             onCheckedChange={() => toggleRoom(room.id)}
                           />
-                          <label
-                            htmlFor={`room-${room.id}`}
-                            className="flex-1 text-gray-900 cursor-pointer"
-                          >
+                          <label htmlFor={`room-${room.id}`} className="flex-1 text-gray-900 cursor-pointer">
                             {room.name}
                           </label>
                           {selectedRoomIds.includes(room.id) && (
@@ -236,9 +211,9 @@ export const RoomPermissionsScreen: React.FC<RoomPermissionsScreenProps> = ({
       {/* Save Button */}
       {selectedUserId && (
         <div className="p-4 bg-white border-t border-gray-200">
-          <Button onClick={handleSave} className="w-full">
+          <Button onClick={handleSave} className="w-full" disabled={saving}>
             <Save className="w-4 h-4 mr-2" />
-            Save Permissions
+            {saving ? 'Saving...' : 'Save Permissions'}
           </Button>
         </div>
       )}

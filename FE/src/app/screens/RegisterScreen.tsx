@@ -3,7 +3,7 @@ import { Home, Lock, Mail, User, ArrowLeft } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import { useApp } from '../context/AppContext';
+import { authApi } from '../services/api';
 
 interface RegisterScreenProps {
   onBack: () => void;
@@ -17,76 +17,38 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({ onBack, onRegist
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
-  const { users, addUser, addHome, addFloor, addRoom, addDevice } = useApp();
+  const [loading, setLoading] = useState(false);
 
-  const handleRegister = () => {
+  const handleRegister = async () => {
     setError('');
 
-    // Validation
     if (!name || !email || !password || !confirmPassword) {
       setError('Please fill in all fields');
       return;
     }
-
     if (password !== confirmPassword) {
       setError('Passwords do not match');
       return;
     }
-
     if (password.length < 6) {
       setError('Password must be at least 6 characters');
       return;
     }
 
-    // Check if email already exists
-    if (users.find((u) => u.email === email)) {
-      setError('Email already registered');
-      return;
+    setLoading(true);
+    try {
+      await authApi.register({ username: name, email, password });
+      setSuccess(true);
+      setTimeout(() => onRegisterSuccess(), 2000);
+    } catch (err: any) {
+      if (err.status === 400) {
+        setError('Username or email already exists');
+      } else {
+        setError('Server error, please try again');
+      }
+    } finally {
+      setLoading(false);
     }
-
-    // Create new home for the user
-    const homeId = `h${Date.now()}`;
-    addHome({
-      name: 'My Home',
-      ownerId: '', // Will be set after user creation
-    });
-
-    // Create user
-    addUser({
-      name,
-      email,
-      homeId,
-    });
-
-    // Create a sample floor for the new home
-    const floorId = `f${Date.now()}`;
-    addFloor({
-      name: 'Ground Floor',
-      level: 0,
-      homeId,
-    });
-
-    // Create a sample room
-    const roomId = `r${Date.now()}`;
-    addRoom({
-      name: 'Living Room',
-      floorId,
-      icon: 'sofa',
-    });
-
-    // Create a sample device
-    addDevice({
-      name: 'Main Light',
-      type: 'actuator',
-      subType: 'light',
-      roomId,
-      isOn: false,
-    });
-
-    setSuccess(true);
-    setTimeout(() => {
-      onRegisterSuccess();
-    }, 2000);
   };
 
   if (success) {
@@ -202,8 +164,8 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({ onBack, onRegist
                 </div>
               )}
 
-              <Button onClick={handleRegister} className="w-full" size="lg">
-                Create Account
+              <Button onClick={handleRegister} className="w-full" size="lg" disabled={loading}>
+                {loading ? 'Creating...' : 'Create Account'}
               </Button>
 
               <p className="text-xs text-gray-500 text-center">

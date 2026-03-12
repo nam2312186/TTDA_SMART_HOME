@@ -20,6 +20,7 @@ interface HomeScreenProps {
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({ onNavigate }) => {
   const { devices, alerts, schedules, currentUser } = useApp();
+  const displayName = currentUser?.name || localStorage.getItem('username') || 'User';
 
   const devicesOn = devices.filter((d) => d.isOn).length;
   const alertsToday = alerts.filter((a) => !a.cleared).length;
@@ -50,11 +51,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onNavigate }) => {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold">Welcome back</h1>
-            <p className="text-blue-100 text-sm">{currentUser?.name}</p>
+            <p className="text-blue-100 text-sm">{displayName}</p>
           </div>
           <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center">
             <span className="text-lg font-semibold">
-              {currentUser?.name.charAt(0)}
+              {displayName.charAt(0).toUpperCase()}
             </span>
           </div>
         </div>

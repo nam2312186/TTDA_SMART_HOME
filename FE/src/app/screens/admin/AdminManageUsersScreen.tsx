@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ChevronLeft,
   Plus,
@@ -10,7 +10,9 @@ import {
   Shield,
   ChevronDown,
   ChevronUp,
+  Lock,
 } from 'lucide-react';
+import { usersApi, permissionsApi } from '../../services/api';
 import { Card, CardContent } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -49,15 +51,42 @@ export const AdminManageUsersScreen: React.FC<AdminManageUsersScreenProps> = ({
   onBack,
   onNavigate,
 }) => {
-  const { users, addUser, updateUser, deleteUser, currentUser, floors, rooms } = useApp();
+  const { users: mockUsers, addUser, updateUser, deleteUser, currentUser, floors, rooms } = useApp();
+  const [apiUsers, setApiUsers] = useState<any[]>([]);
+  const [userPermissions, setUserPermissions] = useState<Record<string, string[]>>({});
   const [showDialog, setShowDialog] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
   const [expandedUsers, setExpandedUsers] = useState<Set<string>>(new Set());
+  const [apiError, setApiError] = useState('');
+
+  useEffect(() => {
+    usersApi.list().then((list: any[]) => {
+      setApiUsers(list);
+      // Load permissions for each non-admin user
+      list.filter(u => (u.role_name || 'user') !== 'admin').forEach(u => {
+        permissionsApi.getUserRooms(u.user_id).then(perms => {
+          setUserPermissions(prev => ({ ...prev, [String(u.user_id)]: perms.map(p => String(p.room_id)) }));
+        }).catch(() => {});
+      });
+    }).catch(() => {});
+  }, []);
+
+  const refreshUsers = () => {
+    usersApi.list().then((list: any[]) => {
+      setApiUsers(list);
+      list.filter(u => (u.role_name || 'user') !== 'admin').forEach(u => {
+        permissionsApi.getUserRooms(u.user_id).then(perms => {
+          setUserPermissions(prev => ({ ...prev, [String(u.user_id)]: perms.map(p => String(p.room_id)) }));
+        }).catch(() => {});
+      });
+    }).catch(() => {});
+  };
 
   const handleAdd = () => {
     setEditingUser(null);
-    setFormData({ name: '', email: '', role: 'user' });
+    setFormData({ name: '', email: '', role: 'user', password: '' });
+    setApiError('');
     setShowDialog(true);
   };
 
@@ -67,35 +96,37 @@ export const AdminManageUsersScreen: React.FC<AdminManageUsersScreenProps> = ({
       name: user.name,
       email: user.email,
       role: user.role,
+      password: '',
     });
+    setApiError('');
     setShowDialog(true);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!formData.name || !formData.email) return;
-
-    if (editingUser) {
-      updateUser(editingUser.id, {
-        name: formData.name,
-        email: formData.email,
-        role: formData.role,
-      });
-    } else {
-      addUser({
-        name: formData.name,
-        email: formData.email,
-        role: formData.role,
-        homeId: currentUser?.homeId || 'home1',
-        roomPermissions: [],
-      });
+    if (!editingUser && !formData.password) { setApiError('Password is required'); return; }
+    setApiError('');
+    try {
+      if (editingUser) {
+        const uid = (editingUser as any).user_id || editingUser.id;
+        await usersApi.update(uid, { username: formData.name, email: formData.email });
+      } else {
+        await usersApi.create({ username: formData.name, email: formData.email, password: formData.password, role_name: formData.role });
+      }
+      refreshUsers();
+      setShowDialog(false);
+      setFormData({ name: '', email: '', role: 'user', password: '' });
+    } catch (e: any) {
+      setApiError(e?.message || 'Failed to save user');
     }
-
-    setShowDialog(false);
-    setFormData({ name: '', email: '', role: 'user' });
   };
 
-  const handleDelete = (userId: string) => {
-    deleteUser(userId);
+  const handleDelete = async (userId: string) => {
+    try {
+      const uid = apiUsers.find(u => String(u.user_id) === userId || u.id === userId)?.user_id || userId;
+      await usersApi.delete(uid);
+      refreshUsers();
+    } catch {}
     setShowDeleteConfirm(null);
   };
 
@@ -205,7 +236,20 @@ export const AdminManageUsersScreen: React.FC<AdminManageUsersScreenProps> = ({
     name: '',
     email: '',
     role: 'user' as 'admin' | 'user',
+    password: '',
   });
+
+  // Merge API users with mock fallback, attaching loaded permissions
+  const users = apiUsers.length > 0
+    ? apiUsers.map(u => ({
+        ...u,
+        id: String(u.user_id),
+        name: u.username,
+        role: u.role_name || 'user',
+        createdAt: new Date(u.created_at || Date.now()),
+        roomPermissions: userPermissions[String(u.user_id)] || [],
+      }))
+    : mockUsers;
 
   return (
     <div className="h-full flex flex-col bg-gray-50">
@@ -391,6 +435,29 @@ export const AdminManageUsersScreen: React.FC<AdminManageUsersScreenProps> = ({
               />
             </div>
 
+            {!editingUser && (
+              <div className="space-y-2">
+                <Label htmlFor="password">Password</Label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <Input
+                    id="password"
+                    type="password"
+                    value={formData.password}
+                    onChange={(e) =>
+                      setFormData({ ...formData, password: e.target.value })
+                    }
+                    placeholder="Enter password"
+                    className="pl-9"
+                  />
+                </div>
+              </div>
+            )}
+
+            {apiError && (
+              <p className="text-sm text-red-600">{apiError}</p>
+            )}
+
             <div className="space-y-2">
               <Label htmlFor="role">Role</Label>
               <Select
@@ -416,7 +483,7 @@ export const AdminManageUsersScreen: React.FC<AdminManageUsersScreenProps> = ({
             </Button>
             <Button
               onClick={handleSave}
-              disabled={!formData.name || !formData.email}
+              disabled={!formData.name || !formData.email || (!editingUser && !formData.password)}
             >
               {editingUser ? 'Save Changes' : 'Create User'}
             </Button>

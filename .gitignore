@@ -2,6 +2,7 @@
 # FE (Node.js / React / Vite)
 # ========================
 node_modules/
+FE/node_modules/
 dist/
 dist-ssr/
 .vite/
@@ -13,33 +14,51 @@ dist-ssr/
 .env.development.local
 .env.test.local
 .env.production.local
+.env.staging
+# Giữ lại file mẫu
+!.env.example
 
 # ========================
-# BE (Node.js)
+# BE (Python / Django)
 # ========================
-BE/node_modules/
-BE/dist/
-BE/.env
-BE/.env.*
-
-# BE (Python FastAPI)
 __pycache__/
 *.py[cod]
 *.pyo
+*.pyd
+*.so
+.Python
+*.egg
+*.egg-info/
+build/
+.eggs/
+
+# Virtual environments
 .venv/
 venv/
 env/
-*.egg-info/
-.pytest_cache/
-.mypy_cache/
+ENV/
 
-# ========================
-# Database
-# ========================
+# Django specific
+db.sqlite3
+db.sqlite3-journal
 *.sqlite
 *.sqlite3
 *.db
 *.db-journal
+mediafiles/
+staticfiles/
+static_collected/
+
+# ========================
+# Testing
+# ========================
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
 
 # ========================
 # Logs
@@ -49,29 +68,54 @@ logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
 
 # ========================
 # IDE / Editor
 # ========================
 .vscode/settings.json
+.vscode/launch.json
+.vscode/*.code-workspace
 .idea/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
-.DS_Store
-Thumbs.db
+*.swp
+*.swo
 
 # ========================
-# Android / Capacitor (APK)
+# OS
+# ========================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ========================
+# Android / Capacitor / Mobile
 # ========================
 android/
 ios/
 .capacitor/
 
 # ========================
+# Docker (giữ docker-compose.yml)
+# ========================
+docker-compose.override.yml
+
+# ========================
 # Misc
 # ========================
 *.zip
 *.tar.gz
+*.rar
+*.bak
+*.tmp
+*.orig
+.cache/
