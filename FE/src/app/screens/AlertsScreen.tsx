@@ -160,16 +160,16 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({ onNavigate }) => {
                       {(alert.metric || alert.thresholdValue !== undefined || alert.actualValue !== undefined) && (
                         <div className="mb-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
                           <div>
-                            {alert.metric ? `Ngưỡng ${alert.metric}` : 'Ngưỡng'}
-                            {alert.thresholdDirection === 'high' ? ' vượt trên ' : alert.thresholdDirection === 'low' ? ' xuống dưới ' : ' '}
+                            {alert.metric ? `${alert.metric} threshold` : 'Threshold'}
+                            {alert.thresholdDirection === 'high' ? ' exceeded ' : alert.thresholdDirection === 'low' ? ' dropped below ' : ' '}
                             {alert.thresholdValue ?? '--'}{alert.unit || ''}
                           </div>
                           <div>
-                            Giá trị ghi nhận: {alert.actualValue ?? '--'}{alert.unit || ''}
+                            Recorded value: {alert.actualValue ?? '--'}{alert.unit || ''}
                           </div>
                           {alert.triggeredAction && alert.triggeredAction !== 'none' && (
                             <div>
-                              Action tự động: {alert.triggeredAction}
+                              Auto action: {alert.triggeredAction}
                               {alert.targetDeviceName ? ` -> ${alert.targetDeviceName}` : ''}
                             </div>
                           )}

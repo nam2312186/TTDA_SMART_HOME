@@ -236,10 +236,10 @@ export const AlertDetailScreen: React.FC<AlertDetailScreenProps> = ({
           <CardContent className="text-sm text-gray-700">
             {alert.type === 'threshold_exceeded' && (
               <div className="space-y-1">
-                <p>Kiểm tra thiết bị cảm biến và môi trường tại {alert.roomName}.</p>
-                <p>Rà soát lại ngưỡng {alert.metric || 'thiết bị'} nếu đây là giá trị hợp lệ.</p>
+                <p>Check sensor devices and environment in {alert.roomName}.</p>
+                <p>Review the {alert.metric || 'device'} threshold if this value is expected.</p>
                 {alert.triggeredAction && alert.triggeredAction !== 'none' && (
-                  <p>Đã tự động chạy action {alert.triggeredAction}{alert.targetDeviceName ? ` cho ${alert.targetDeviceName}` : ''}.</p>
+                  <p>Auto-action <strong>{alert.triggeredAction}</strong>{alert.targetDeviceName ? ` triggered on ${alert.targetDeviceName}` : ''} was executed.</p>
                 )}
               </div>
             )}

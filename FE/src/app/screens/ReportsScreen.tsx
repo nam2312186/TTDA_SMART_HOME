@@ -16,11 +16,9 @@ import { Badge } from '../components/ui/badge';
 import {
   BarChart,
   Bar,
+  Cell,
   LineChart,
   Line,
-  PieChart,
-  Pie,
-  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -35,7 +33,7 @@ interface ReportsScreenProps {
 }
 
 export const ReportsScreen: React.FC<ReportsScreenProps> = ({ onNavigate }) => {
-  const { devices, alerts, historyLogs, schedules } = useApp();
+  const { devices, alerts, historyLogs, schedules, floors, rooms } = useApp();
 
   // Device usage data
   const devicesByType = {
@@ -89,6 +87,32 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({ onNavigate }) => {
       scheduled: dayLogs.filter((l) => l.eventType === 'scheduled_action').length,
     };
   });
+
+  // Floor statistics
+  const floorStats = floors.map((floor) => {
+    const floorRooms = rooms.filter((r) => r.floorId === floor.id);
+    const floorDevices = devices.filter((d) => floorRooms.some((r) => r.id === d.roomId));
+    return {
+      name: floor.name,
+      'Devices': floorDevices.length,
+      'Active': floorDevices.filter((d) => d.isOn).length,
+      'Sensors': floorDevices.filter((d) => d.type === 'sensor').length,
+    };
+  });
+
+  // Room statistics (top 6 by device count)
+  const roomStats = rooms
+    .map((room) => {
+      const roomDevices = devices.filter((d) => d.roomId === room.id);
+      return {
+        name: room.name.length > 10 ? room.name.slice(0, 10) + '…' : room.name,
+        fullName: room.name,
+        'Devices': roomDevices.length,
+        'Active': roomDevices.filter((d) => d.isOn).length,
+      };
+    })
+    .sort((a, b) => b['Devices'] - a['Devices'])
+    .slice(0, 6);
 
   // Alerts by severity
   const alertsBySeverity = [
@@ -300,29 +324,66 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({ onNavigate }) => {
             <CardTitle className="text-base">Alerts by Severity</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex items-center justify-center">
-              <ResponsiveContainer width="100%" height={200}>
-                <PieChart>
-                  <Pie
-                    data={alertsBySeverity}
-                    cx="50%"
-                    cy="50%"
-                    labelLine={false}
-                    label={({ name, value }) => `${name}: ${value}`}
-                    outerRadius={80}
-                    fill="#8884d8"
-                    dataKey="value"
-                  >
-                    {alertsBySeverity.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
+            <ResponsiveContainer width="100%" height={180}>
+              <BarChart data={alertsBySeverity} layout="vertical" margin={{ left: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
+                <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={55} />
+                <Tooltip />
+                <Bar dataKey="value" name="Alerts" radius={[0, 4, 4, 0]}>
+                  {alertsBySeverity.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
           </CardContent>
         </Card>
+
+        {/* Floor Statistics */}
+        {floorStats.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">By Floor</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={Math.max(180, floorStats.length * 50)}>
+                <BarChart data={floorStats} layout="vertical" margin={{ left: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                  <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
+                  <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={70} />
+                  <Tooltip />
+                  <Legend wrapperStyle={{ fontSize: '12px' }} />
+                  <Bar dataKey="Devices" fill="#94a3b8" radius={[0, 3, 3, 0]} />
+                  <Bar dataKey="Active" fill="#3b82f6" radius={[0, 3, 3, 0]} />
+                  <Bar dataKey="Sensors" fill="#10b981" radius={[0, 3, 3, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Room Statistics */}
+        {roomStats.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">By Room</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={Math.max(200, roomStats.length * 44)}>
+                <BarChart data={roomStats} layout="vertical" margin={{ left: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                  <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
+                  <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={80} />
+                  <Tooltip formatter={(val, name, props) => [val, props.payload.fullName || name]} />
+                  <Legend wrapperStyle={{ fontSize: '12px' }} />
+                  <Bar dataKey="Devices" fill="#8b5cf6" radius={[0, 3, 3, 0]} />
+                  <Bar dataKey="Active" fill="#f97316" radius={[0, 3, 3, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Summary */}
         <Card>

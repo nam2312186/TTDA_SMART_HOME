@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Activity, Building2, FileText, Layers3, Thermometer, Droplets, SunMedium, Wifi } from 'lucide-react';
-import { BarChart, Bar, CartesianGrid, LineChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { BarChart, Bar, CartesianGrid, LabelList, LineChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 import { Badge } from '../components/ui/badge';
 import { Card, CardContent } from '../components/ui/card';
@@ -24,11 +24,26 @@ type ScopeKey = 'floor' | 'room';
 type PeriodKey = 'day' | 'month' | 'year';
 
 const METRIC_OPTIONS: Array<{ value: MetricKey; label: string; icon: typeof Thermometer }> = [
-  { value: 'temperature', label: 'Nhiệt độ', icon: Thermometer },
-  { value: 'humidity', label: 'Độ ẩm', icon: Droplets },
-  { value: 'light', label: 'Ánh sáng', icon: SunMedium },
-  { value: 'device_activity', label: 'Hoạt động thiết bị', icon: Activity },
+  { value: 'temperature', label: 'Temperature', icon: Thermometer },
+  { value: 'humidity', label: 'Humidity', icon: Droplets },
+  { value: 'light', label: 'Light', icon: SunMedium },
+  { value: 'device_activity', label: 'Device Activity', icon: Activity },
 ];
+
+const normalizeUnit = (rawUnit: string, metric: MetricKey): string => {
+  const unit = (rawUnit || '').trim();
+  if (metric === 'temperature') {
+    if (!unit || unit.toLowerCase() === 'c' || unit.toLowerCase() === 'degc' || unit.toLowerCase() === '°c') {
+      return '°C';
+    }
+    if (unit.toLowerCase() === 'f' || unit.toLowerCase() === 'degf' || unit.toLowerCase() === '°f') {
+      return '°F';
+    }
+  }
+  if (metric === 'humidity' && !unit) return '%';
+  if (metric === 'light' && !unit) return 'lux';
+  return unit;
+};
 
 export const AdminDashboardScreen: React.FC<AdminDashboardScreenProps> = ({ onNavigate }) => {
   const { devices, rooms, floors, users, alerts, schedules, isAdmin, currentUser } = useApp();
@@ -102,13 +117,18 @@ export const AdminDashboardScreen: React.FC<AdminDashboardScreenProps> = ({ onNa
   const chartData = useMemo(() => {
     return analytics.map((series) => {
       const latestPoint = series.points?.[series.points.length - 1];
+      const rawValue = Number(latestPoint?.value ?? 0);
+      const inferredUnit = metric === 'temperature' ? '°C' : metric === 'humidity' ? '%' : metric === 'light' ? 'lux' : '';
+      const pointUnit = normalizeUnit(latestPoint?.unit || inferredUnit, metric);
+      const precision = metric === 'device_activity' ? 0 : 2;
       return {
         name: series.scope_name,
-        value: latestPoint?.value ?? 0,
-        unit: latestPoint?.unit || '',
+        value: rawValue,
+        unit: pointUnit,
+        displayValue: `${rawValue.toFixed(precision)}${pointUnit}`,
       };
     });
-  }, [analytics]);
+  }, [analytics, metric]);
 
   const trendData = useMemo(() => {
     const buckets = new Map<string, Record<string, string | number>>();
@@ -151,7 +171,7 @@ export const AdminDashboardScreen: React.FC<AdminDashboardScreenProps> = ({ onNa
           <div>
             <h1 className="text-2xl font-bold">{isAdmin ? 'Analytics Dashboard' : 'Room Analytics'}</h1>
             <p className="text-sm text-slate-200">
-              {isAdmin ? 'Thống kê theo tầng và phòng, không dùng biểu đồ tròn.' : `Theo dõi khu vực của ${currentUser?.name || 'bạn'}`}
+              {isAdmin ? `Welcome back, ${currentUser?.name || 'Admin'} 👋` : `Hello, ${currentUser?.name || 'you'} — all systems normal.`}
             </p>
           </div>
         </div>
@@ -175,8 +195,8 @@ export const AdminDashboardScreen: React.FC<AdminDashboardScreenProps> = ({ onNa
           <CardContent className="p-4 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">Thống kê theo {scope === 'floor' ? 'tầng' : 'phòng'}</h2>
-                <p className="text-sm text-slate-500">Chọn loại thống kê và chu kỳ ngày, tháng, năm.</p>
+                <h2 className="text-lg font-semibold text-slate-900">Analytics by {scope === 'floor' ? 'Floor' : 'Room'}</h2>
+                <p className="text-sm text-slate-500">Select metric and time period.</p>
               </div>
               <Badge variant="outline" className="gap-1">
                 <ActiveMetricIcon className="w-3 h-3" />
@@ -186,10 +206,10 @@ export const AdminDashboardScreen: React.FC<AdminDashboardScreenProps> = ({ onNa
 
             <div className="grid grid-cols-1 gap-3">
               <div className="rounded-xl border border-slate-200 p-3">
-                <p className="text-xs text-slate-500 mb-2">Phạm vi</p>
+                <p className="text-xs text-slate-500 mb-2">Scope</p>
                 <div className="grid grid-cols-2 gap-2">
-                  <button onClick={() => setScope('floor')} className={`flex-1 rounded-lg px-3 py-2 text-sm ${scope === 'floor' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700'}`}>Theo tầng</button>
-                  <button onClick={() => setScope('room')} className={`flex-1 rounded-lg px-3 py-2 text-sm ${scope === 'room' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700'}`}>Theo phòng</button>
+                  <button onClick={() => setScope('floor')} className={`flex-1 rounded-lg px-3 py-2 text-sm ${scope === 'floor' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700'}`}>By Floor</button>
+                  <button onClick={() => setScope('room')} className={`flex-1 rounded-lg px-3 py-2 text-sm ${scope === 'room' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700'}`}>By Room</button>
                 </div>
               </div>
 
@@ -200,7 +220,7 @@ export const AdminDashboardScreen: React.FC<AdminDashboardScreenProps> = ({ onNa
                     <button
                       key={option.value}
                       onClick={() => setMetric(option.value)}
-                      className={`min-h-11 rounded-lg px-3 py-2 text-sm ${metric === option.value ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-700'}`}
+                      className={`min-h-11 rounded-lg px-2 py-2 text-xs leading-tight ${metric === option.value ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-700'}`}
                     >
                       {option.label}
                     </button>
@@ -209,7 +229,7 @@ export const AdminDashboardScreen: React.FC<AdminDashboardScreenProps> = ({ onNa
               </div>
 
               <div className="rounded-xl border border-slate-200 p-3">
-                <p className="text-xs text-slate-500 mb-2">Chu kỳ</p>
+                <p className="text-xs text-slate-500 mb-2">Period</p>
                 <div className="grid grid-cols-3 gap-2">
                   {(['day', 'month', 'year'] as PeriodKey[]).map((periodValue) => (
                     <button
@@ -217,7 +237,7 @@ export const AdminDashboardScreen: React.FC<AdminDashboardScreenProps> = ({ onNa
                       onClick={() => setPeriod(periodValue)}
                       className={`rounded-lg px-3 py-2 text-sm ${period === periodValue ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-700'}`}
                     >
-                      {periodValue === 'day' ? 'Ngày' : periodValue === 'month' ? 'Tháng' : 'Năm'}
+                      {periodValue === 'day' ? 'Day' : periodValue === 'month' ? 'Month' : 'Year'}
                     </button>
                   ))}
                 </div>
@@ -226,7 +246,7 @@ export const AdminDashboardScreen: React.FC<AdminDashboardScreenProps> = ({ onNa
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <div className="rounded-2xl border border-slate-100 bg-white p-4">
-                <h3 className="text-sm font-semibold text-slate-900 mb-3">Giá trị hiện tại theo {scope === 'floor' ? 'tầng' : 'phòng'}</h3>
+                <h3 className="text-sm font-semibold text-slate-900 mb-3">Current values by {scope === 'floor' ? 'floor' : 'room'}</h3>
                 {chartData.length === 0 ? (
                   <p className="text-sm text-slate-500">Chưa có dữ liệu cho bộ lọc hiện tại.</p>
                 ) : (
@@ -235,15 +255,23 @@ export const AdminDashboardScreen: React.FC<AdminDashboardScreenProps> = ({ onNa
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} angle={chartData.length > 4 ? -18 : 0} textAnchor={chartData.length > 4 ? 'end' : 'middle'} height={chartData.length > 4 ? 52 : 30} />
                       <YAxis tick={{ fontSize: 12 }} />
-                      <Tooltip />
-                      <Bar dataKey="value" fill="#0f766e" radius={[8, 8, 0, 0]} />
+                      <Tooltip
+                        formatter={(value: number, _name: string, props: any) => {
+                          const unit = props?.payload?.unit || '';
+                          const precision = metric === 'device_activity' ? 0 : 2;
+                          return [`${Number(value).toFixed(precision)}${unit}`, activeMetric.label];
+                        }}
+                      />
+                      <Bar dataKey="value" fill="#0f766e" radius={[8, 8, 0, 0]}>
+                        <LabelList dataKey="displayValue" position="insideTop" style={{ fontSize: 12, fill: '#ffffff', fontWeight: 700 }} />
+                      </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 )}
               </div>
 
               <div className="rounded-2xl border border-slate-100 bg-white p-4">
-                <h3 className="text-sm font-semibold text-slate-900 mb-3">Xu hướng {activeMetric.label.toLowerCase()}</h3>
+                <h3 className="text-sm font-semibold text-slate-900 mb-3">{activeMetric.label} trend</h3>
                 {trendData.length === 0 ? (
                   <p className="text-sm text-slate-500">Chưa có chuỗi thời gian để hiển thị.</p>
                 ) : (
@@ -281,7 +309,7 @@ export const AdminDashboardScreen: React.FC<AdminDashboardScreenProps> = ({ onNa
               </Badge>
             </div>
             {realtimeCards.length === 0 ? (
-              <p className="text-sm text-slate-500">Đang chờ dữ liệu realtime từ sensor...</p>
+              <p className="text-sm text-slate-500">Waiting for realtime sensor data...</p>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {realtimeCards.map((card) => (
@@ -308,17 +336,17 @@ export const AdminDashboardScreen: React.FC<AdminDashboardScreenProps> = ({ onNa
                 <button onClick={() => onNavigate('manageAreas')} className="rounded-xl border border-slate-200 p-4 text-left hover:bg-slate-50">
                   <Building2 className="w-5 h-5 text-slate-700 mb-2" />
                   <p className="font-medium text-slate-900">Manage Floors & Rooms</p>
-                  <p className="text-xs text-slate-500 mt-1">Thêm, sửa, xoá tầng và phòng.</p>
+                  <p className="text-xs text-slate-500 mt-1">Add, edit or remove floors and rooms.</p>
                 </button>
                 <button onClick={() => onNavigate('auditLogs')} className="rounded-xl border border-slate-200 p-4 text-left hover:bg-slate-50">
                   <FileText className="w-5 h-5 text-slate-700 mb-2" />
                   <p className="font-medium text-slate-900">Audit Logs</p>
-                  <p className="text-xs text-slate-500 mt-1">Kiểm tra log metadata của user, device và automation.</p>
+                  <p className="text-xs text-slate-500 mt-1">Review user, device and automation logs.</p>
                 </button>
                 <button onClick={() => onNavigate('schedule')} className="rounded-xl border border-slate-200 p-4 text-left hover:bg-slate-50">
                   <Activity className="w-5 h-5 text-slate-700 mb-2" />
                   <p className="font-medium text-slate-900">Schedules</p>
-                  <p className="text-xs text-slate-500 mt-1">Quản lý lịch theo phòng hoặc từng thiết bị.</p>
+                  <p className="text-xs text-slate-500 mt-1">Manage schedules by room or device.</p>
                 </button>
               </div>
             </CardContent>

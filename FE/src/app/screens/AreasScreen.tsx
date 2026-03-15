@@ -50,9 +50,9 @@ export const AreasScreen: React.FC<AreasScreenProps> = ({ onNavigate }) => {
             <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100">
               <Building2 className="w-8 h-8 text-slate-400" />
             </div>
-            <p className="text-lg font-semibold text-slate-800">Chưa có tầng nào hiển thị</p>
+            <p className="text-lg font-semibold text-slate-800">No floors available</p>
             <p className="mt-2 text-sm text-slate-500">
-              Dữ liệu sẽ hiện lại sau khi backend trả về floors. Thử chuyển tab hoặc quay lại màn này sau khi đăng nhập.
+              Data will appear once the backend responds. Try switching tabs or revisiting after logging in.
             </p>
           </div>
         ) : (

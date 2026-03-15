@@ -50,8 +50,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onNavigate }) => {
       <div className="bg-gradient-to-b from-blue-600 to-blue-700 text-white p-6 pb-8">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold">Welcome back</h1>
-            <p className="text-blue-100 text-sm">{displayName}</p>
+            <h1 className="text-2xl font-bold">Welcome back,</h1>
+            <p className="text-blue-100 text-sm">{displayName} 👋</p>
           </div>
           <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center">
             <span className="text-lg font-semibold">
@@ -64,15 +64,15 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onNavigate }) => {
         <div className="grid grid-cols-3 gap-3">
           <div className="bg-white/10 backdrop-blur-sm rounded-xl p-3 text-center">
             <div className="text-2xl font-bold">{devices.length}</div>
-            <div className="text-xs text-blue-100 mt-1">Total Devices</div>
+            <div className="text-xs text-blue-100 mt-1">Devices</div>
           </div>
           <div className="bg-white/10 backdrop-blur-sm rounded-xl p-3 text-center">
             <div className="text-2xl font-bold">{devicesOn}</div>
-            <div className="text-xs text-blue-100 mt-1">Devices On</div>
+            <div className="text-xs text-blue-100 mt-1">Active</div>
           </div>
           <div className="bg-white/10 backdrop-blur-sm rounded-xl p-3 text-center">
             <div className="text-2xl font-bold">{alertsToday}</div>
-            <div className="text-xs text-blue-100 mt-1">Active Alerts</div>
+            <div className="text-xs text-blue-100 mt-1">Alerts</div>
           </div>
         </div>
       </div>
@@ -81,7 +81,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onNavigate }) => {
         {/* Key Sensors */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Environmental Sensors</CardTitle>
+            <CardTitle className="text-base">Environment</CardTitle>
           </CardHeader>
           <CardContent className="grid grid-cols-2 gap-3">
             <div className="flex items-center gap-3 p-3 bg-orange-50 rounded-lg">
