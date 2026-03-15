@@ -8,7 +8,7 @@ CREATE TABLE "users" (
   "username" varchar,
   "password" varchar,
   "email" varchar,
-  "creat_at" datetime,
+  "created_at" datetime,
   "role_id" integer
 );
 
@@ -35,7 +35,7 @@ CREATE TABLE "devices" (
   "type_id" integer,
   "room_id" integer,
   "status" boolean,
-  "create_at" datetime
+  "created_at" datetime
 );
 
 CREATE TABLE "sensor_data" (
