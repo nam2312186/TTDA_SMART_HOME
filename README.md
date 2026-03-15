@@ -1,22 +1,48 @@
 # Smart Home App
 
-Ứng dụng Smart Home gồm hai phần:
-- **Backend (BE)** — Django REST Framework, chạy ở cổng `8000`
-- **Frontend (FE)** — React + Vite, chạy ở cổng `5173`
+Ứng dụng quản lý nhà thông minh gồm hai phần:
+- **Backend (BE)** — Django REST Framework + Django Channels (WebSocket), chạy ở cổng `8000`
+- **Frontend (FE)** — React + Vite + TypeScript + Tailwind CSS, chạy ở cổng `5173`
 
-> Kết nối IoT (ESP32, Arduino, MQTT): xem hướng dẫn riêng tại [backend/README_IOT.md](backend/README_IOT.md)
+### Tính năng chính
+
+| Tính năng | Mô tả |
+|-----------|-------|
+| Quản lý thiết bị | Sensor (nhiệt độ, độ ẩm, ánh sáng) và Actuator (quạt, đèn, v.v.) |
+| Phân cấp không gian | Tầng → Phòng → Thiết bị |
+| Ngưỡng & Cảnh báo | Tự động kích hoạt thiết bị khi vượt ngưỡng min/max |
+| Lịch hẹn | Hẹn giờ theo phòng hoặc thiết bị cụ thể, lặp theo thứ hoặc hàng ngày |
+| Nhật ký hoạt động | Ghi log đầy đủ mọi thao tác với metadata |
+| Phân tích dữ liệu | Biểu đồ theo tầng/phòng, theo ngày/tháng/năm, 4 loại chỉ số |
+| Realtime | Dữ liệu cảm biến stream qua WebSocket |
+| Kết nối IoT | Thiết bị thật đẩy dữ liệu qua HTTP API với token xác thực |
+
+> Kết nối IoT (ESP32, Arduino): xem hướng dẫn tại [backend/README_IOT.md](backend/README_IOT.md)
 
 ---
 
 ## Mục lục
 
-1. [Yêu cầu hệ thống](#1-yêu-cầu-hệ-thống)
-2. [Cấu trúc thư mục](#2-cấu-trúc-thư-mục)
-3. [Cài đặt Backend (BE)](#3-cài-đặt-backend-be)
-4. [Cài đặt Frontend (FE)](#4-cài-đặt-frontend-fe)
-5. [Chạy cùng lúc FE + BE](#5-chạy-cùng-lúc-fe--be)
-6. [Chạy bằng Docker](#6-chạy-bằng-docker)
-7. [Tài khoản mặc định](#7-tài-khoản-mặc-định)
+- [Smart Home App](#smart-home-app)
+    - [Tính năng chính](#tính-năng-chính)
+  - [Mục lục](#mục-lục)
+  - [1. Yêu cầu hệ thống](#1-yêu-cầu-hệ-thống)
+  - [2. Cấu trúc thư mục](#2-cấu-trúc-thư-mục)
+  - [3. Cài đặt Backend (BE)](#3-cài-đặt-backend-be)
+    - [3.1 Tạo môi trường ảo và cài package](#31-tạo-môi-trường-ảo-và-cài-package)
+    - [3.2 Tạo file môi trường](#32-tạo-file-môi-trường)
+    - [3.3 Khởi tạo database và chạy server](#33-khởi-tạo-database-và-chạy-server)
+    - [3.4 Các lệnh hay dùng](#34-các-lệnh-hay-dùng)
+  - [4. Cài đặt Frontend (FE)](#4-cài-đặt-frontend-fe)
+    - [Build production](#build-production)
+  - [5. Chạy cùng lúc FE + BE](#5-chạy-cùng-lúc-fe--be)
+  - [6. Chạy bằng Docker](#6-chạy-bằng-docker)
+  - [7. Tài khoản mặc định](#7-tài-khoản-mặc-định)
+  - [8. Dữ liệu demo \& IoT Token](#8-dữ-liệu-demo--iot-token)
+    - [Đẩy dữ liệu cảm biến (HTTP)](#đẩy-dữ-liệu-cảm-biến-http)
+    - [WebSocket realtime](#websocket-realtime)
+  - [9. API nhanh](#9-api-nhanh)
+  - [Kết nối IoT (ESP32 / Arduino)](#kết-nối-iot-esp32--arduino)
 
 ---
 
@@ -34,21 +60,26 @@
 
 ```
 Smart_Home_App_Design/
-├── backend/          ← Django BE
-│   ├── auth_app/
-│   ├── iot_app/
-│   ├── building_app/
-│   ├── devices_app/
-│   ├── monitoring_app/
-│   ├── users_app/
+├── backend/                ← Django BE
+│   ├── auth_app/           ← Đăng nhập / đăng ký / vai trò
+│   ├── building_app/       ← Tầng, phòng, lịch hẹn, seed data
+│   ├── devices_app/        ← Device (sensor + actuator), IoT Token
+│   ├── monitoring_app/     ← SensorData, Threshold, Alert, ActivityLog
+│   ├── users_app/          ← Hồ sơ người dùng
 │   ├── manage.py
-│   └── README_IOT.md  ← Hướng dẫn kết nối IoT
-├── FE/               ← React + Vite FE
+│   └── README_IOT.md       ← Hướng dẫn kết nối IoT
+├── FE/                     ← React + Vite FE
 │   ├── src/
+│   │   ├── app/
+│   │   │   ├── screens/   ← Màn hình chính của app
+│   │   │   ├── context/   ← AppContext (global state)
+│   │   │   ├── data/      ← Mock data (dev)
+│   │   │   └── types/
+│   │   └── styles/
 │   └── package.json
 ├── .env.example
 ├── requirements.txt
-└── README.md         ← File này
+└── README.md               ← File này
 ```
 
 ---
@@ -210,7 +241,73 @@ docker compose exec backend python manage.py makemigrations <app_name>
 
 ---
 
-## Kết nối IoT (ESP32 / Arduino / MQTT)
+## 8. Dữ liệu demo & IoT Token
+
+Lệnh `seed_data` tự động tạo thêm **4 thiết bị demo** trong phòng Living Room để test luồng cảm biến → ngưỡng → cảnh báo:
+
+| Thiết bị | Loại | Chỉ số |
+|----------|------|--------|
+| Living Room Temp Sensor | sensor | temperature |
+| Living Room Humidity Sensor | sensor | humidity |
+| Living Room Light Sensor | sensor | light |
+| Living Room Ventilation Fan | actuator | fan |
+
+**Ngưỡng mẫu**: khi `temperature > 30°C` → tự động **bật quạt** (`turn_on`).
+
+Sau khi seed, token IoT của từng cảm biến được in ra console. Lấy token để đẩy dữ liệu thật:
+
+```bash
+# Xem token trong DB
+cd backend
+..\.venv\Scripts\python.exe manage.py shell -c "
+from devices_app.models import IoTToken
+for t in IoTToken.objects.select_related('device').all():
+    print(t.device.device_name, '->', t.token)
+"
+```
+
+### Đẩy dữ liệu cảm biến (HTTP)
+
+```bash
+# Ví dụ: đẩy nhiệt độ 28.5°C
+curl -X POST http://localhost:8000/api/iot/data/ \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -d '{"value": 28.5, "unit": "C", "metric": "temperature"}'
+```
+
+> Khi thiết bị thật đẩy dữ liệu vào, nó sẽ ghi đè `current_value` của chính record đó. Không cần xóa demo data — thiết bị thật tự cập nhật cùng bản ghi.
+
+### WebSocket realtime
+
+```
+ws://localhost:8000/ws/sensors/
+```
+
+Frontend tự subscribe để nhận dữ liệu mới ngay khi IoT push vào.
+
+---
+
+## 9. API nhanh
+
+| Method | Endpoint | Mô tả |
+|--------|----------|-------|
+| POST | `/api/auth/login/` | Đăng nhập |
+| POST | `/api/auth/register/` | Đăng ký |
+| GET | `/api/devices/` | Danh sách thiết bị |
+| PATCH | `/api/devices/{id}/` | Cập nhật trạng thái / giá trị |
+| GET | `/api/alerts/` | Danh sách cảnh báo |
+| GET | `/api/schedules/` | Danh sách lịch hẹn |
+| GET | `/api/dashboard/analytics/` | Analytics (query: `scope`, `metric`, `period`) |
+| POST | `/api/iot/data/` | IoT push dữ liệu (Bearer token) |
+| GET | `/api/floors/` | Danh sách tầng (admin: full CRUD) |
+| GET | `/api/rooms/` | Danh sách phòng (admin: full CRUD) |
+
+> Swagger UI: **http://localhost:8000/api/docs/**
+
+---
+
+## Kết nối IoT (ESP32 / Arduino)
 
 Xem hướng dẫn chi tiết tại: **[backend/README_IOT.md](backend/README_IOT.md)**
 
@@ -220,40 +317,3 @@ Nội dung:
 - Kết nối MQTT (Mosquitto / HiveMQ)
 - Code mẫu ESP32 (Arduino)
 
-### Tạo migration
-
-```
-docker compose exec backend python manage.py makemigrations <appname>
-```
-
-### Áp dụng migration
-
-```
-docker compose exec backend python manage.py migrate
-```
-
-### Tạo admin user
-
-```
-docker compose exec backend python manage.py createsuperuser
-```
-
-### Tạo app mới
-
-```
-docker compose exec backend python manage.py startapp <appname>
-```
-
-### Revert migration của app
-
-```
-docker compose exec backend python manage.py migrate <appname> zero
-```
-
----
-
-# 4. Dừng hệ thống
-
-```
-docker compose down
-```
