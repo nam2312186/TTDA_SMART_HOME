@@ -3,7 +3,7 @@ MQTT Client cho Smart Home IoT
 ================================
 Kết nối với MQTT Broker (Mosquitto / HiveMQ / EMQX...).
 Thiết bị IoT publish lên các topic:
-  smarthome/device/{device_id}/sensor/{sensor_id}   → {"value": 25.5, "unit": "°C"}
+    smarthome/device/{device_id}/sensor               → {"value": 25.5, "unit": "°C", "metric": "temperature"}
   smarthome/device/{device_id}/status               → {"status": true/false}
 
 Chạy: python manage.py mqtt_listen
@@ -21,49 +21,70 @@ TOPIC_SENSOR = 'smarthome/device/+/sensor/+'   # wildcard MQTT
 TOPIC_STATUS = 'smarthome/device/+/status'
 
 
-def _handle_sensor_data(device_id: int, sensor_id: int, payload: dict):
+def _handle_sensor_data(device_id: int, payload: dict):
     """Lưu dữ liệu cảm biến vào DB và kiểm tra threshold."""
-    from monitoring_app.models import SensorData, Threshold, Alert
-    from devices_app.models import Sensor
+    from monitoring_app.models import SensorData
+    from monitoring_app.views import _check_threshold
+    from devices_app.models import Device
+    from iot_app.broadcast import broadcast_sensor_update
+    from logs_app.models import ActivityLog
+    from logs_app.utils import create_activity_log
 
     value = payload.get('value')
     unit = payload.get('unit', '')
+    metric = payload.get('metric', '')
 
     if value is None:
         logger.warning(f'MQTT: payload thiếu value — {payload}')
         return
 
     try:
-        sensor = Sensor.objects.get(pk=sensor_id, device_id=device_id)
-    except Sensor.DoesNotExist:
-        logger.warning(f'MQTT: sensor_id={sensor_id} không thuộc device_id={device_id}')
+        device = Device.objects.get(pk=device_id)
+    except Device.DoesNotExist:
+        logger.warning(f'MQTT: device_id={device_id} không tồn tại')
         return
 
-    data = SensorData.objects.create(sensor=sensor, value=float(value), unit=unit)
-    logger.info(f'MQTT: Lưu data_id={data.data_id} sensor={sensor_id} value={value}{unit}')
+    metric = metric or device.device_subtype
+    unit = unit or device.unit or ''
+    data = SensorData.objects.create(device=device, value=float(value), unit=unit, metric=metric)
+    device.current_value = float(value)
+    device.unit = unit or device.unit
+    from django.utils import timezone
+    device.last_reading_at = timezone.now()
+    device.save(update_fields=['current_value', 'unit', 'last_reading_at', 'updated_at'])
+    logger.info(f'MQTT: Lưu data_id={data.data_id} device={device_id} value={value}{unit}')
+    create_activity_log(
+        device=device,
+        source=ActivityLog.SOURCE_DEVICE,
+        category='automation',
+        action='mqtt_sensor_data_received',
+        details=f'Nhận MQTT {metric}: {value}{unit}',
+        metadata={'device_id': device_id, 'metric': metric, 'data_id': data.data_id},
+    )
+    broadcast_sensor_update(device.device_id, float(value), unit, device.device_id, metric)
 
-    # Kiểm tra threshold → tạo alert
-    try:
-        threshold = Threshold.objects.get(sensor=sensor)
-        msg = None
-        if float(value) < threshold.min_value:
-            msg = f'[{sensor.sensor_type}] Giá trị {value} thấp hơn ngưỡng tối thiểu {threshold.min_value}'
-        elif float(value) > threshold.max_value:
-            msg = f'[{sensor.sensor_type}] Giá trị {value} cao hơn ngưỡng tối đa {threshold.max_value}'
-        if msg:
-            Alert.objects.create(sensor=sensor, message=msg)
-            logger.warning(f'MQTT ALERT: {msg}')
-    except Threshold.DoesNotExist:
-        pass
+    alert = _check_threshold(data, source='device')
+    if alert:
+        logger.warning(f'MQTT ALERT: {alert.message}')
 
 
 def _handle_device_status(device_id: int, payload: dict):
     """Cập nhật trạng thái thiết bị từ MQTT."""
     from devices_app.models import Device
+    from logs_app.models import ActivityLog
+    from logs_app.utils import create_activity_log
     try:
         device = Device.objects.get(pk=device_id)
         device.status = bool(payload.get('status', device.status))
         device.save(update_fields=['status'])
+        create_activity_log(
+            device=device,
+            source=ActivityLog.SOURCE_DEVICE,
+            category='automation',
+            action='mqtt_device_status_updated',
+            details=f'Thiết bị "{device.device_name}" cập nhật trạng thái → {device.status}',
+            metadata={'device_id': device_id},
+        )
         logger.info(f'MQTT: Device {device_id} status → {device.status}')
     except Device.DoesNotExist:
         logger.warning(f'MQTT: device_id={device_id} không tồn tại')
@@ -89,12 +110,13 @@ def on_message(client, userdata, msg):
         return
 
     parts = topic.split('/')
-    # Topic: smarthome/device/{device_id}/sensor/{sensor_id}
-    if len(parts) == 5 and parts[3] == 'sensor':
+    # Topic: smarthome/device/{device_id}/sensor/{metric?}
+    if len(parts) >= 4 and parts[3] == 'sensor':
         try:
             device_id = int(parts[2])
-            sensor_id = int(parts[4])
-            _handle_sensor_data(device_id, sensor_id, payload)
+            if len(parts) >= 5 and not payload.get('metric'):
+                payload['metric'] = parts[4]
+            _handle_sensor_data(device_id, payload)
         except ValueError:
             logger.warning(f'MQTT: Topic sai format — {topic}')
 

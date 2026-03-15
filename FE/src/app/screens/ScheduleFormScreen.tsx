@@ -26,14 +26,14 @@ export const ScheduleFormScreen: React.FC<ScheduleFormScreenProps> = ({
   deviceId,
   onBack,
 }) => {
-  const { floors, rooms, devices, addSchedule, updateSchedule, deleteSchedule } = useApp();
+  const { rooms, devices, addSchedule, updateSchedule, deleteSchedule } = useApp();
   
   const [name, setName] = useState(schedule?.name || '');
-  const [scopeType, setScopeType] = useState<'device' | 'room' | 'floor'>(
-    schedule?.scope.type || (deviceId ? 'device' : 'floor')
+  const [scopeType, setScopeType] = useState<'device' | 'room'>(
+    schedule?.scope.type || (deviceId ? 'device' : 'room')
   );
   const [scopeId, setScopeId] = useState(schedule?.scope.id || deviceId || '');
-  const [action, setAction] = useState<'on' | 'off'>(schedule?.action || 'on');
+  const [action, setAction] = useState<'on' | 'off' | 'toggle'>(schedule?.action || 'on');
   const [time, setTime] = useState(schedule?.time || '08:00');
   const [daysOfWeek, setDaysOfWeek] = useState<number[]>(
     schedule?.daysOfWeek || [1, 2, 3, 4, 5]
@@ -57,9 +57,7 @@ export const ScheduleFormScreen: React.FC<ScheduleFormScreenProps> = ({
   };
 
   const getScopeName = () => {
-    if (scopeType === 'floor') {
-      return floors.find((f) => f.id === scopeId)?.name || '';
-    } else if (scopeType === 'room') {
+    if (scopeType === 'room') {
       return rooms.find((r) => r.id === scopeId)?.name || '';
     } else {
       return devices.find((d) => d.id === scopeId)?.name || '';
@@ -103,7 +101,6 @@ export const ScheduleFormScreen: React.FC<ScheduleFormScreenProps> = ({
 
   // Get available scope options based on type
   const getScopeOptions = () => {
-    if (scopeType === 'floor') return floors;
     if (scopeType === 'room') return rooms;
     return devices.filter((d) => d.type === 'actuator');
   };
@@ -165,7 +162,7 @@ export const ScheduleFormScreen: React.FC<ScheduleFormScreenProps> = ({
               <Label htmlFor="scopeType">Apply To *</Label>
               <Select
                 value={scopeType}
-                onValueChange={(value: 'device' | 'room' | 'floor') => {
+                onValueChange={(value: 'device' | 'room') => {
                   setScopeType(value);
                   setScopeId('');
                 }}
@@ -175,7 +172,6 @@ export const ScheduleFormScreen: React.FC<ScheduleFormScreenProps> = ({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="floor">Entire Floor</SelectItem>
                   <SelectItem value="room">Specific Room</SelectItem>
                   <SelectItem value="device">Single Device</SelectItem>
                 </SelectContent>
@@ -184,7 +180,7 @@ export const ScheduleFormScreen: React.FC<ScheduleFormScreenProps> = ({
 
             <div className="space-y-2">
               <Label htmlFor="scopeId">
-                Select {scopeType === 'floor' ? 'Floor' : scopeType === 'room' ? 'Room' : 'Device'} *
+                Select {scopeType === 'room' ? 'Room' : 'Device'} *
               </Label>
               <Select value={scopeId} onValueChange={setScopeId}>
                 <SelectTrigger id="scopeId">
@@ -211,7 +207,7 @@ export const ScheduleFormScreen: React.FC<ScheduleFormScreenProps> = ({
               <Label htmlFor="action">Device Action *</Label>
               <Select
                 value={action}
-                onValueChange={(value: 'on' | 'off') => setAction(value)}
+                onValueChange={(value: 'on' | 'off' | 'toggle') => setAction(value)}
               >
                 <SelectTrigger id="action">
                   <SelectValue />
@@ -219,6 +215,7 @@ export const ScheduleFormScreen: React.FC<ScheduleFormScreenProps> = ({
                 <SelectContent>
                   <SelectItem value="on">Turn On</SelectItem>
                   <SelectItem value="off">Turn Off</SelectItem>
+                  <SelectItem value="toggle">Toggle</SelectItem>
                 </SelectContent>
               </Select>
             </div>

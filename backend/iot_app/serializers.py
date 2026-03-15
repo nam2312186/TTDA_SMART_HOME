@@ -1,6 +1,5 @@
 from rest_framework import serializers
 from .models import IoTToken
-from monitoring_app.models import SensorData
 
 
 class IoTTokenSerializer(serializers.ModelSerializer):
@@ -12,6 +11,6 @@ class IoTTokenSerializer(serializers.ModelSerializer):
 
 class IoTPushSerializer(serializers.Serializer):
     """Payload thiết bị IoT gửi dữ liệu cảm biến lên."""
-    sensor_id = serializers.IntegerField()
     value = serializers.FloatField()
-    unit = serializers.CharField(max_length=20)
+    unit = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    metric = serializers.CharField(max_length=50, required=False, allow_blank=True)

@@ -3,7 +3,6 @@ import {
   ChevronLeft,
   AlertTriangle,
   CheckCircle2,
-  Clock,
   Lightbulb,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -127,12 +126,53 @@ export const AlertDetailScreen: React.FC<AlertDetailScreenProps> = ({
               <span className="text-gray-500">Device</span>
               <span className="font-medium">{alert.deviceName}</span>
             </div>
+            {alert.floorName && (
+              <div className="flex justify-between">
+                <span className="text-gray-500">Floor</span>
+                <span className="font-medium">{alert.floorName}</span>
+              </div>
+            )}
+            <div className="flex justify-between">
+              <span className="text-gray-500">Room</span>
+              <span className="font-medium">{alert.roomName}</span>
+            </div>
             <div className="flex justify-between">
               <span className="text-gray-500">Type</span>
               <span className="font-medium capitalize">
                 {alert.type.replace(/_/g, ' ')}
               </span>
             </div>
+            {alert.metric && (
+              <div className="flex justify-between">
+                <span className="text-gray-500">Metric</span>
+                <span className="font-medium capitalize">{alert.metric}</span>
+              </div>
+            )}
+            {alert.thresholdValue !== undefined && (
+              <div className="flex justify-between">
+                <span className="text-gray-500">Threshold</span>
+                <span className="font-medium">
+                  {alert.thresholdDirection === 'high' ? 'Above' : 'Below'} {alert.thresholdValue}{alert.unit || ''}
+                </span>
+              </div>
+            )}
+            {alert.actualValue !== undefined && (
+              <div className="flex justify-between">
+                <span className="text-gray-500">Actual Value</span>
+                <span className="font-medium text-red-600">
+                  {alert.actualValue}{alert.unit || ''}
+                </span>
+              </div>
+            )}
+            {alert.triggeredAction && alert.triggeredAction !== 'none' && (
+              <div className="flex justify-between">
+                <span className="text-gray-500">Auto Action</span>
+                <span className="font-medium">
+                  {alert.triggeredAction}
+                  {alert.targetDeviceName ? ` -> ${alert.targetDeviceName}` : ''}
+                </span>
+              </div>
+            )}
             <div className="flex justify-between">
               <span className="text-gray-500">Severity</span>
               <Badge variant="secondary" className="capitalize">
@@ -195,25 +235,13 @@ export const AlertDetailScreen: React.FC<AlertDetailScreenProps> = ({
           </CardHeader>
           <CardContent className="text-sm text-gray-700">
             {alert.type === 'threshold_exceeded' && (
-              <ul className="list-disc list-inside space-y-1">
-                <li>Check the device sensor for accuracy</li>
-                <li>Adjust threshold values if needed</li>
-                <li>Verify environmental conditions</li>
-              </ul>
-            )}
-            {alert.type === 'motion_detected' && (
-              <ul className="list-disc list-inside space-y-1">
-                <li>Review security camera footage if available</li>
-                <li>Check if any scheduled activities were planned</li>
-                <li>Consider adjusting motion sensor sensitivity</li>
-              </ul>
-            )}
-            {alert.type === 'device_offline' && (
-              <ul className="list-disc list-inside space-y-1">
-                <li>Check device power connection</li>
-                <li>Verify network connectivity</li>
-                <li>Try restarting the device</li>
-              </ul>
+              <div className="space-y-1">
+                <p>Kiểm tra thiết bị cảm biến và môi trường tại {alert.roomName}.</p>
+                <p>Rà soát lại ngưỡng {alert.metric || 'thiết bị'} nếu đây là giá trị hợp lệ.</p>
+                {alert.triggeredAction && alert.triggeredAction !== 'none' && (
+                  <p>Đã tự động chạy action {alert.triggeredAction}{alert.targetDeviceName ? ` cho ${alert.targetDeviceName}` : ''}.</p>
+                )}
+              </div>
             )}
           </CardContent>
         </Card>

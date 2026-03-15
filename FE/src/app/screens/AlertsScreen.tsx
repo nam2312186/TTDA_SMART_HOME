@@ -157,6 +157,24 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({ onNavigate }) => {
                       <p className="text-sm text-gray-600 line-clamp-2 mb-2">
                         {alert.message}
                       </p>
+                      {(alert.metric || alert.thresholdValue !== undefined || alert.actualValue !== undefined) && (
+                        <div className="mb-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                          <div>
+                            {alert.metric ? `Ngưỡng ${alert.metric}` : 'Ngưỡng'}
+                            {alert.thresholdDirection === 'high' ? ' vượt trên ' : alert.thresholdDirection === 'low' ? ' xuống dưới ' : ' '}
+                            {alert.thresholdValue ?? '--'}{alert.unit || ''}
+                          </div>
+                          <div>
+                            Giá trị ghi nhận: {alert.actualValue ?? '--'}{alert.unit || ''}
+                          </div>
+                          {alert.triggeredAction && alert.triggeredAction !== 'none' && (
+                            <div>
+                              Action tự động: {alert.triggeredAction}
+                              {alert.targetDeviceName ? ` -> ${alert.targetDeviceName}` : ''}
+                            </div>
+                          )}
+                        </div>
+                      )}
                       <div className="flex items-center gap-2 text-xs text-gray-500">
                         <span>{new Date(alert.timestamp).toLocaleString()}</span>
                         {alert.cleared && alert.clearedAt && (

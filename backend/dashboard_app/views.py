@@ -1,134 +1,204 @@
-from rest_framework.views import APIView
-from rest_framework.response import Response
+from collections import defaultdict
 
-from devices_app.models import Device, Sensor
-from monitoring_app.models import SensorData, Alert
+from django.db.models import Avg, Count, Q
+from django.db.models.functions import TruncDay, TruncMonth, TruncYear
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from building_app.models import Floor, Room
+from devices_app.models import Device
+from logs_app.models import ActivityLog
+from monitoring_app.models import Alert, SensorData
+
+
+PERIOD_MAP = {
+    'day': TruncDay,
+    'month': TruncMonth,
+    'year': TruncYear,
+}
 
 
 class DashboardSummaryView(APIView):
-    """GET /api/dashboard/summary — Thống kê tổng quan hệ thống."""
     def get(self, request):
         total_devices = Device.objects.count()
+        sensor_devices = Device.objects.filter(device_type=Device.TYPE_SENSOR).count()
+        actuator_devices = Device.objects.filter(device_type=Device.TYPE_ACTUATOR).count()
         devices_on = Device.objects.filter(status=True).count()
-        total_sensors = Sensor.objects.count()
         active_alerts = Alert.objects.filter(is_read=False).count()
 
+        floor_stats = []
+        room_stats = []
+        floors = Floor.objects.order_by('level', 'floor_id')
+        for floor in floors:
+            floor_rooms = Room.objects.filter(floor=floor)
+            room_count = floor_rooms.count()
+            device_count = Device.objects.filter(room__floor=floor).count()
+            sensor_count = Device.objects.filter(room__floor=floor, device_type=Device.TYPE_SENSOR).count()
+            actuator_count = Device.objects.filter(room__floor=floor, device_type=Device.TYPE_ACTUATOR).count()
+            floor_stats.append({
+                'floor_id': floor.floor_id,
+                'floor_name': floor.floor_name,
+                'level': floor.level,
+                'room_count': room_count,
+                'device_count': device_count,
+                'sensor_count': sensor_count,
+                'actuator_count': actuator_count,
+            })
+            for room in floor_rooms:
+                room_stats.append({
+                    'room_id': room.room_id,
+                    'room_name': room.room_name,
+                    'floor_id': floor.floor_id,
+                    'floor_name': floor.floor_name,
+                    'device_count': Device.objects.filter(room=room).count(),
+                    'sensor_count': Device.objects.filter(room=room, device_type=Device.TYPE_SENSOR).count(),
+                    'actuator_count': Device.objects.filter(room=room, device_type=Device.TYPE_ACTUATOR).count(),
+                })
+
         return Response({
-            "total_devices": total_devices,
-            "devices_on": devices_on,
-            "devices_off": total_devices - devices_on,
-            "total_sensors": total_sensors,
-            "active_alerts": active_alerts,
+            'total_devices': total_devices,
+            'sensor_devices': sensor_devices,
+            'actuator_devices': actuator_devices,
+            'devices_on': devices_on,
+            'devices_off': total_devices - devices_on,
+            'active_alerts': active_alerts,
+            'floor_stats': floor_stats,
+            'room_stats': room_stats,
         })
 
 
-class DashboardTemperatureView(APIView):
-    """GET /api/dashboard/temperature — Dữ liệu biểu đồ nhiệt độ (24h gần nhất)."""
+class DashboardMetricView(APIView):
+    metric_name = ''
+
     def get(self, request):
-        sensors = Sensor.objects.filter(sensor_type='temperature').select_related('device')
+        sensor_data = SensorData.objects.select_related('device').filter(metric=self.metric_name)
         result = []
-        for sensor in sensors:
-            records = SensorData.objects.filter(sensor=sensor).order_by('-recorded_at')[:24]
+        for device in Device.objects.filter(device_type=Device.TYPE_SENSOR, device_subtype=self.metric_name):
+            records = sensor_data.filter(device=device).order_by('-recorded_at')[:24]
             result.append({
-                "sensor_id": sensor.sensor_id,
-                "device_name": sensor.device.device_name,
-                "data": [
-                    {"value": r.value, "unit": r.unit, "recorded_at": r.recorded_at}
-                    for r in reversed(list(records))
+                'device_id': device.device_id,
+                'device_name': device.device_name,
+                'room_name': device.room.room_name if device.room else None,
+                'floor_name': device.room.floor.floor_name if device.room and device.room.floor else None,
+                'data': [
+                    {'value': record.value, 'unit': record.unit, 'recorded_at': record.recorded_at}
+                    for record in reversed(list(records))
                 ],
             })
         return Response(result)
 
 
-class DashboardHumidityView(APIView):
-    """GET /api/dashboard/humidity — Dữ liệu biểu đồ độ ẩm (24h gần nhất)."""
-    def get(self, request):
-        sensors = Sensor.objects.filter(sensor_type='humidity').select_related('device')
-        result = []
-        for sensor in sensors:
-            records = SensorData.objects.filter(sensor=sensor).order_by('-recorded_at')[:24]
-            result.append({
-                "sensor_id": sensor.sensor_id,
-                "device_name": sensor.device.device_name,
-                "data": [
-                    {"value": r.value, "unit": r.unit, "recorded_at": r.recorded_at}
-                    for r in reversed(list(records))
-                ],
-            })
-        return Response(result)
+class DashboardTemperatureView(DashboardMetricView):
+    metric_name = 'temperature'
+
+
+class DashboardHumidityView(DashboardMetricView):
+    metric_name = 'humidity'
+
+
+class DashboardLightView(DashboardMetricView):
+    metric_name = 'light'
 
 
 class DashboardDeviceStatusView(APIView):
-    """GET /api/dashboard/device-status — Trạng thái tất cả thiết bị."""
     def get(self, request):
-        devices = Device.objects.select_related('room').all()
-        result = [
+        devices = Device.objects.select_related('room', 'room__floor').all()
+        return Response([
             {
-                "device_id": d.device_id,
-                "device_name": d.device_name,
-                "device_type": d.device_type,
-                "status": d.status,
-                "room": d.room.room_name if d.room else None,
-                "created_at": d.created_at,
+                'device_id': device.device_id,
+                'device_name': device.device_name,
+                'device_type': device.device_type,
+                'device_subtype': device.device_subtype,
+                'status': device.status,
+                'current_value': device.current_value,
+                'unit': device.unit,
+                'room_name': device.room.room_name if device.room else None,
+                'floor_name': device.room.floor.floor_name if device.room and device.room.floor else None,
+                'created_at': device.created_at,
+                'last_reading_at': device.last_reading_at,
             }
-            for d in devices
-        ]
-        return Response(result)
+            for device in devices
+        ])
 
 
-
-class DashboardTemperatureView(APIView):
-    """GET /api/dashboard/temperature — Dữ liệu biểu đồ nhiệt độ (24h gần nhất)."""
+class DashboardAnalyticsView(APIView):
     def get(self, request):
-        sensors = Sensor.objects.filter(sub_type='temperature').select_related('device')
-        result = []
-        for sensor in sensors:
-            records = SensorData.objects.filter(sensor=sensor).order_by('-timestamp')[:24]
-            result.append({
-                "sensor_id": sensor.sensor_id,
-                "device_name": sensor.device.name,
-                "unit": sensor.unit,
-                "data": [
-                    {"value": r.value, "timestamp": r.timestamp}
-                    for r in reversed(list(records))
+        scope = request.query_params.get('scope', 'floor')
+        metric = request.query_params.get('metric', 'temperature')
+        period = request.query_params.get('period', 'day')
+        if scope not in {'floor', 'room'}:
+            return Response({'detail': 'scope must be floor or room'}, status=400)
+        if metric not in {'temperature', 'humidity', 'light', 'device_activity'}:
+            return Response({'detail': 'unsupported metric'}, status=400)
+        if period not in PERIOD_MAP:
+            return Response({'detail': 'period must be day, month, or year'}, status=400)
+
+        trunc = PERIOD_MAP[period]
+        records_by_scope = defaultdict(list)
+
+        if metric == 'device_activity':
+            logs = ActivityLog.objects.select_related('device', 'device__room', 'device__room__floor').filter(
+                category__in=['device', 'automation']
+            )
+            grouped = logs.annotate(bucket=trunc('action_time')).values(
+                'bucket',
+                'device__room__room_id',
+                'device__room__room_name',
+                'device__room__floor__floor_id',
+                'device__room__floor__floor_name',
+            ).annotate(value=Count('log_id')).order_by('bucket')
+            for item in grouped:
+                scope_id = item['device__room__floor__floor_id'] if scope == 'floor' else item['device__room__room_id']
+                scope_name = item['device__room__floor__floor_name'] if scope == 'floor' else item['device__room__room_name']
+                if not scope_id:
+                    continue
+                records_by_scope[str(scope_id)].append({
+                    'bucket': item['bucket'],
+                    'label': scope_name,
+                    'value': item['value'],
+                })
+        else:
+            data = SensorData.objects.select_related('device', 'device__room', 'device__room__floor').filter(metric=metric)
+            grouped = data.annotate(bucket=trunc('recorded_at')).values(
+                'bucket',
+                'device__room__room_id',
+                'device__room__room_name',
+                'device__room__floor__floor_id',
+                'device__room__floor__floor_name',
+                'unit',
+            ).annotate(value=Avg('value')).order_by('bucket')
+            for item in grouped:
+                scope_id = item['device__room__floor__floor_id'] if scope == 'floor' else item['device__room__room_id']
+                scope_name = item['device__room__floor__floor_name'] if scope == 'floor' else item['device__room__room_name']
+                if not scope_id:
+                    continue
+                records_by_scope[str(scope_id)].append({
+                    'bucket': item['bucket'],
+                    'label': scope_name,
+                    'value': round(item['value'] or 0, 2),
+                    'unit': item['unit'],
+                })
+
+        series = []
+        for scope_id, values in records_by_scope.items():
+            label = values[0]['label'] if values else scope_id
+            series.append({
+                'scope_id': scope_id,
+                'scope_name': label,
+                'points': [
+                    {
+                        'bucket': value['bucket'],
+                        'value': value['value'],
+                        'unit': value.get('unit'),
+                    }
+                    for value in values
                 ],
             })
-        return Response(result)
 
-
-class DashboardHumidityView(APIView):
-    """GET /api/dashboard/humidity — Dữ liệu biểu đồ độ ẩm (24h gần nhất)."""
-    def get(self, request):
-        sensors = Sensor.objects.filter(sub_type='humidity').select_related('device')
-        result = []
-        for sensor in sensors:
-            records = SensorData.objects.filter(sensor=sensor).order_by('-timestamp')[:24]
-            result.append({
-                "sensor_id": sensor.sensor_id,
-                "device_name": sensor.device.name,
-                "unit": sensor.unit,
-                "data": [
-                    {"value": r.value, "timestamp": r.timestamp}
-                    for r in reversed(list(records))
-                ],
-            })
-        return Response(result)
-
-
-class DashboardDeviceStatusView(APIView):
-    """GET /api/dashboard/device-status — Trạng thái tất cả thiết bị."""
-    def get(self, request):
-        devices = Device.objects.select_related('room').all()
-        result = [
-            {
-                "device_id": d.device_id,
-                "name": d.name,
-                "type": d.type,
-                "sub_type": d.sub_type,
-                "is_on": d.is_on,
-                "room": d.room.name if d.room else None,
-                "last_updated": d.last_updated,
-            }
-            for d in devices
-        ]
-        return Response(result)
+        series.sort(key=lambda item: item['scope_name'])
+        return Response({
+            'scope': scope,
+            'metric': metric,
+            'period': period,
+            'series': series,
+        })

@@ -6,8 +6,11 @@ from django.shortcuts import get_object_or_404
 
 from .models import IoTToken
 from .serializers import IoTTokenSerializer, IoTPushSerializer
-from monitoring_app.models import SensorData, Threshold, Alert
-from devices_app.models import Sensor
+from monitoring_app.models import SensorData
+from monitoring_app.views import _check_threshold
+from iot_app.broadcast import broadcast_sensor_update
+from logs_app.utils import create_activity_log
+from logs_app.models import ActivityLog
 
 
 def _get_device_by_token(request):
@@ -25,31 +28,13 @@ def _get_device_by_token(request):
         return None
 
 
-def _check_threshold_and_alert(sensor, value):
-    """Tự động tạo Alert nếu vượt ngưỡng threshold."""
-    try:
-        threshold = Threshold.objects.get(sensor=sensor)
-        if value < threshold.min_value:
-            Alert.objects.create(
-                sensor=sensor,
-                message=f'[{sensor.sensor_type}] Giá trị {value} thấp hơn ngưỡng tối thiểu {threshold.min_value}',
-            )
-        elif value > threshold.max_value:
-            Alert.objects.create(
-                sensor=sensor,
-                message=f'[{sensor.sensor_type}] Giá trị {value} cao hơn ngưỡng tối đa {threshold.max_value}',
-            )
-    except Threshold.DoesNotExist:
-        pass
-
-
 # ─── IoT Push Data ────────────────────────────────────────────────────────────
 
 class IoTPushView(APIView):
     """
     POST /api/iot/push/
     Header: Authorization: Token <device-token>
-    Body: { "sensor_id": 1, "value": 25.5, "unit": "°C" }
+    Body: { "value": 25.5, "unit": "°C", "metric": "temperature" }
 
     Thiết bị IoT gọi endpoint này để gửi dữ liệu cảm biến lên hệ thống.
     """
@@ -63,20 +48,31 @@ class IoTPushView(APIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        sensor_id = serializer.validated_data['sensor_id']
         value = serializer.validated_data['value']
-        unit = serializer.validated_data['unit']
+        unit = serializer.validated_data.get('unit') or device.unit or ''
+        metric = serializer.validated_data.get('metric') or device.device_subtype
 
-        # Đảm bảo sensor thuộc về device đã xác thực
-        sensor = get_object_or_404(Sensor, pk=sensor_id, device=device)
-
-        data = SensorData.objects.create(sensor=sensor, value=value, unit=unit)
-        _check_threshold_and_alert(sensor, value)
+        data = SensorData.objects.create(device=device, value=value, unit=unit, metric=metric)
+        device.current_value = value
+        device.unit = unit or device.unit
+        device.last_reading_at = timezone.now()
+        device.save(update_fields=['current_value', 'unit', 'last_reading_at', 'updated_at'])
+        _check_threshold(data, source='device')
+        broadcast_sensor_update(device.device_id, value, unit, device.device_id, metric)
+        create_activity_log(
+            device=device,
+            source=ActivityLog.SOURCE_DEVICE,
+            category='automation',
+            action='iot_sensor_data_received',
+            details=f'Nhận dữ liệu {metric}: {value}{unit}',
+            metadata={'device_id': device.device_id, 'metric': metric, 'data_id': data.data_id, 'value': value},
+        )
 
         return Response({
             'message': 'Dữ liệu đã được lưu',
             'data_id': data.data_id,
-            'sensor_id': sensor_id,
+            'device_id': device.device_id,
+            'metric': metric,
             'value': value,
             'unit': unit,
             'recorded_at': data.recorded_at,
@@ -87,9 +83,9 @@ class IoTPushBatchView(APIView):
     """
     POST /api/iot/push/batch/
     Header: Authorization: Token <device-token>
-    Body: [ { "sensor_id": 1, "value": 25.5, "unit": "°C" }, ... ]
+    Body: [ { "value": 25.5, "unit": "°C", "metric": "temperature" }, ... ]
 
-    Gửi nhiều cảm biến cùng lúc (ví dụ: ESP32 có cả nhiệt độ + độ ẩm).
+    Gửi nhiều mẫu đo của cùng một device sensor.
     """
     def post(self, request):
         device = _get_device_by_token(request)
@@ -105,17 +101,32 @@ class IoTPushBatchView(APIView):
             if not s.is_valid():
                 results.append({'error': s.errors})
                 continue
-            sensor = Sensor.objects.filter(pk=s.validated_data['sensor_id'], device=device).first()
-            if not sensor:
-                results.append({'error': f'sensor_id {s.validated_data["sensor_id"]} không hợp lệ'})
-                continue
+            metric = s.validated_data.get('metric') or device.device_subtype
+            unit = s.validated_data.get('unit') or device.unit or ''
             data = SensorData.objects.create(
-                sensor=sensor,
+                device=device,
                 value=s.validated_data['value'],
-                unit=s.validated_data['unit'],
+                unit=unit,
+                metric=metric,
             )
-            _check_threshold_and_alert(sensor, s.validated_data['value'])
-            results.append({'data_id': data.data_id, 'sensor_id': sensor.sensor_id, 'ok': True})
+            device.current_value = s.validated_data['value']
+            device.unit = unit or device.unit
+            device.last_reading_at = timezone.now()
+            device.save(update_fields=['current_value', 'unit', 'last_reading_at', 'updated_at'])
+            _check_threshold(data, source='device')
+            broadcast_sensor_update(device.device_id, data.value, unit, device.device_id, metric)
+            create_activity_log(
+                device=device,
+                source=ActivityLog.SOURCE_DEVICE,
+                category='automation',
+                action='iot_sensor_data_received',
+                details=(
+                    f'Nhận dữ liệu batch {metric}: '
+                    f'{s.validated_data["value"]}{unit}'
+                ),
+                metadata={'device_id': device.device_id, 'metric': metric, 'data_id': data.data_id},
+            )
+            results.append({'data_id': data.data_id, 'device_id': device.device_id, 'metric': metric, 'ok': True})
 
         return Response(results, status=status.HTTP_201_CREATED)
 

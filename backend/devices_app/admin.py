@@ -10,7 +10,7 @@ class SensorInline(admin.StackedInline):
 
 @admin.register(Device)
 class DeviceAdmin(admin.ModelAdmin):
-    list_display = ('device_id', 'device_name', 'device_type', 'room', 'status', 'created_at')
+    list_display = ('device_id', 'device_name', 'device_type', 'device_subtype', 'room', 'status', 'current_value', 'created_at')
     list_filter = ('device_type', 'status', 'room__floor__user')
     search_fields = ('device_name', 'room__room_name')
     list_editable = ('status',)

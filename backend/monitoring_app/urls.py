@@ -2,11 +2,11 @@ from django.urls import path
 from .views import (
     SensorDataListView, SensorDataLatestView, SensorDataBySensorView,
     ThresholdListView, ThresholdDetailView,
-    AlertListView, AlertDetailView, AlertMarkReadView,
+    AlertListView, AlertUnreadListView, AlertDetailView, AlertMarkReadView,
 )
 
 urlpatterns = [
-    # Sensor Data — "latest" phải đứng TRƯỚC <int:sensor_id> để Django khớp đúng
+    # Sensor Data
     path("sensor-data/", SensorDataListView.as_view()),
     path("sensor-data/latest/", SensorDataLatestView.as_view()),
     path("sensor-data/<int:sensor_id>/", SensorDataBySensorView.as_view()),
@@ -17,6 +17,8 @@ urlpatterns = [
 
     # Alerts
     path("alerts/", AlertListView.as_view()),
+    path("alerts/unread/", AlertUnreadListView.as_view()),
     path("alerts/<int:pk>/", AlertDetailView.as_view()),
     path("alerts/<int:pk>/read/", AlertMarkReadView.as_view()),
+    path("alerts/<int:pk>/mark-read/", AlertMarkReadView.as_view()),
 ]

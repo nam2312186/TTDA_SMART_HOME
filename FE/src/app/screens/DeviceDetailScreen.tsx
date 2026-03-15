@@ -19,6 +19,7 @@ import { Switch } from '../components/ui/switch';
 import { Badge } from '../components/ui/badge';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useApp } from '../context/AppContext';
 import { Device } from '../types';
@@ -47,11 +48,13 @@ export const DeviceDetailScreen: React.FC<DeviceDetailScreenProps> = ({
   onBack,
   onNavigate,
 }) => {
-  const { devices, rooms, toggleDevice, updateDeviceThreshold, historyLogs } = useApp();
+  const { devices, rooms, toggleDevice, updateDevice, historyLogs } = useApp();
   const device = devices.find((d) => d.id === initialDevice.id) || initialDevice;
   const room = rooms.find((r) => r.id === device.roomId);
   const [minThreshold, setMinThreshold] = useState(device.threshold?.min?.toString() || '');
   const [maxThreshold, setMaxThreshold] = useState(device.threshold?.max?.toString() || '');
+  const [thresholdAction, setThresholdAction] = useState<'none' | 'turn_on' | 'turn_off' | 'toggle'>(device.threshold?.action || 'none');
+  const [targetDeviceId, setTargetDeviceId] = useState(device.threshold?.targetDeviceId || device.id);
 
   const Icon = device.type === 'sensor'
     ? sensorIconMap[device.subType] || Thermometer
@@ -61,10 +64,21 @@ export const DeviceDetailScreen: React.FC<DeviceDetailScreenProps> = ({
     .filter((log) => log.deviceId === device.id)
     .slice(0, 5);
 
+  const actuatorTargets = devices.filter((d) => d.type === 'actuator' && d.roomId === device.roomId);
+
   const handleSaveThreshold = () => {
     const min = minThreshold ? parseFloat(minThreshold) : undefined;
     const max = maxThreshold ? parseFloat(maxThreshold) : undefined;
-    updateDeviceThreshold(device.id, min, max);
+    updateDevice(device.id, {
+      threshold: {
+        id: device.threshold?.id,
+        min,
+        max,
+        action: thresholdAction,
+        targetDeviceId,
+        targetDeviceName: actuatorTargets.find((d) => d.id === targetDeviceId)?.name,
+      },
+    });
   };
 
   // Sensor view
@@ -175,6 +189,35 @@ export const DeviceDetailScreen: React.FC<DeviceDetailScreenProps> = ({
                   />
                 </div>
               </div>
+              <div className="space-y-2">
+                <Label>Automatic Action</Label>
+                <Select value={thresholdAction} onValueChange={(value: 'none' | 'turn_on' | 'turn_off' | 'toggle') => setThresholdAction(value)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No action</SelectItem>
+                    <SelectItem value="turn_on">Turn on</SelectItem>
+                    <SelectItem value="turn_off">Turn off</SelectItem>
+                    <SelectItem value="toggle">Toggle</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {thresholdAction !== 'none' && actuatorTargets.length > 0 && (
+                <div className="space-y-2">
+                  <Label>Target Device</Label>
+                  <Select value={targetDeviceId} onValueChange={setTargetDeviceId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select actuator" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {actuatorTargets.map((target) => (
+                        <SelectItem key={target.id} value={target.id}>{target.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               <Button onClick={handleSaveThreshold} className="w-full">
                 Save Thresholds
               </Button>

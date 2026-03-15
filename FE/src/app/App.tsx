@@ -5,7 +5,6 @@ import { SplashScreen } from './screens/SplashScreen';
 import { LoginScreen } from './screens/LoginScreen';
 import { RegisterScreen } from './screens/RegisterScreen';
 import { ForgotPasswordScreen } from './screens/ForgotPasswordScreen';
-import { HomeScreen } from './screens/HomeScreen';
 import { AreasScreen } from './screens/AreasScreen';
 import { ControlScreen } from './screens/ControlScreen';
 import { ScheduleScreen } from './screens/ScheduleScreen';
@@ -20,9 +19,12 @@ import { RoomDevicesScreen } from './screens/RoomDevicesScreen';
 import { AddDeviceScreen } from './screens/AddDeviceScreen';
 import { EditDeviceScreen } from './screens/EditDeviceScreen';
 import { DeleteDeviceConfirmScreen } from './screens/DeleteDeviceConfirmScreen';
+import { AdminDashboardScreen } from './screens/AdminDashboardScreen';
 import { AdminManageUsersScreen } from './screens/admin/AdminManageUsersScreen';
 import { RoomPermissionsScreen } from './screens/admin/RoomPermissionsScreen';
 import { AdminManageDevicesScreen } from './screens/admin/AdminManageDevicesScreen';
+import { ManageFloorsScreen } from './screens/admin/ManageFloorsScreen';
+import { AuditLogsScreen } from './screens/AuditLogsScreen';
 import { Device, Alert, Schedule } from './types';
 import { Toaster } from './components/ui/sonner';
 
@@ -51,10 +53,12 @@ type Screen =
   | { type: 'deleteDeviceConfirm'; device: Device; roomName: string }
   | { type: 'manageUsers' }
   | { type: 'roomPermissions'; userId?: string }
-  | { type: 'manageDevices' };
+  | { type: 'manageDevices' }
+  | { type: 'manageAreas' }
+  | { type: 'auditLogs' };
 
 function MainApp() {
-  const { logout, loginContext } = useApp();
+  const { logout, loginContext, currentUser } = useApp();
   const [authScreen, setAuthScreen] = useState<AuthScreen>({ type: 'splash' });
   const [isLoggedIn, setIsLoggedIn] = useState(() => !!localStorage.getItem('user_id'));
   const [activeTab, setActiveTab] = useState<TabType>('home');
@@ -150,6 +154,12 @@ function MainApp() {
         break;
       case 'manageDevices':
         newScreen = { type: 'manageDevices' };
+        break;
+      case 'manageAreas':
+        newScreen = { type: 'manageAreas' };
+        break;
+      case 'auditLogs':
+        newScreen = { type: 'auditLogs' };
         break;
       default:
         return;
@@ -268,7 +278,7 @@ function MainApp() {
       {/* Screen Content */}
       <div className="flex-1 overflow-hidden">
         {currentScreen.type === 'home' && (
-          <HomeScreen onNavigate={handleNavigate} />
+          <AdminDashboardScreen onNavigate={handleNavigate} />
         )}
         {currentScreen.type === 'areas' && (
           <AreasScreen onNavigate={handleNavigate} />
@@ -365,6 +375,12 @@ function MainApp() {
         )}
         {currentScreen.type === 'manageDevices' && (
           <AdminManageDevicesScreen onBack={handleBack} />
+        )}
+        {currentScreen.type === 'manageAreas' && (
+          <ManageFloorsScreen onBack={handleBack} />
+        )}
+        {currentScreen.type === 'auditLogs' && (
+          <AuditLogsScreen onBack={handleBack} />
         )}
       </div>
 

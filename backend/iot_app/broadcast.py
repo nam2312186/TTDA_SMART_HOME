@@ -36,7 +36,7 @@ def _send(group: str, message: dict):
         logger.warning(f'Broadcast thất bại: {e}')
 
 
-def broadcast_sensor_update(sensor_id: int, value: float, unit: str, device_id: int = None):
+def broadcast_sensor_update(sensor_id: int, value: float, unit: str, device_id: int = None, metric: str = ''):
     """Broadcast dữ liệu cảm biến mới về tất cả FE clients."""
     _send('sensor_updates', {
         'type': 'sensor_update',
@@ -44,13 +44,14 @@ def broadcast_sensor_update(sensor_id: int, value: float, unit: str, device_id: 
             'event': 'sensor_data',
             'sensor_id': sensor_id,
             'device_id': device_id,
+            'metric': metric,
             'value': value,
             'unit': unit,
         }
     })
 
 
-def broadcast_alert(alert_id: int, sensor_id: int, message: str):
+def broadcast_alert(alert_id: int, sensor_id: int, message: str, device_id: int = None):
     """Broadcast alert mới về FE."""
     _send('sensor_updates', {
         'type': 'alert_created',
@@ -58,6 +59,7 @@ def broadcast_alert(alert_id: int, sensor_id: int, message: str):
             'event': 'alert',
             'alert_id': alert_id,
             'sensor_id': sensor_id,
+            'device_id': device_id,
             'message': message,
         }
     })

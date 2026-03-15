@@ -9,6 +9,8 @@ import {
   Users,
   Shield,
   Cpu,
+  Building2,
+  FileText,
 } from 'lucide-react';
 import { Card, CardContent } from '../components/ui/card';
 import { useApp } from '../context/AppContext';
@@ -66,6 +68,18 @@ export const MoreScreen: React.FC<MoreScreenProps> = ({
       label: 'Manage Devices',
       description: 'Full device management',
       onClick: () => onNavigate('manageDevices'),
+    },
+    {
+      icon: Building2,
+      label: 'Manage Floors & Rooms',
+      description: 'Add/edit floors and rooms',
+      onClick: () => onNavigate('manageAreas'),
+    },
+    {
+      icon: FileText,
+      label: 'Audit Logs',
+      description: 'User and automatic device actions',
+      onClick: () => onNavigate('auditLogs'),
     },
   ];
 

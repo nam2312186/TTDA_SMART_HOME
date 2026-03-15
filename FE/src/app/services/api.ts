@@ -6,8 +6,13 @@
 const BASE = '/api';
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const userId = localStorage.getItem('user_id');
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(userId ? { 'X-User-Id': userId } : {}),
+      ...options?.headers,
+    },
     ...options,
   });
   if (!res.ok) {
@@ -87,7 +92,7 @@ export const devicesApi = {
   turnOn: (id: number) => request(`/devices/${id}/on/`, { method: 'POST' }),
   turnOff: (id: number) => request(`/devices/${id}/off/`, { method: 'POST' }),
   toggle: (id: number) => request(`/devices/${id}/toggle/`, { method: 'POST' }),
-  byRoom: (roomId: number) => request<any[]>(`/devices/room/${roomId}/`),
+  byRoom: (roomId: number) => request<any[]>(`/rooms/${roomId}/devices/`),
 };
 
 // ─── SENSORS ─────────────────────────────────────────────────────────────────
@@ -100,9 +105,9 @@ export const sensorsApi = {
 
 // ─── SENSOR DATA ─────────────────────────────────────────────────────────────
 export const sensorDataApi = {
-  bySensor: (sensorId: number) => request<any[]>(`/sensor-data/sensor/${sensorId}/`),
-  latest: (sensorId: number) => request<any>(`/sensor-data/sensor/${sensorId}/latest/`),
-  add: (data: { sensor: number; value: number; unit: string }) =>
+  bySensor: (sensorId: number) => request<any[]>(`/sensor-data/${sensorId}/`),
+  latest: () => request<any[]>(`/sensor-data/latest/`),
+  add: (data: { device: number; value: number; unit?: string; metric?: string }) =>
     request('/sensor-data/', { method: 'POST', body: JSON.stringify(data) }),
 };
 
@@ -116,8 +121,8 @@ export const alertsApi = {
 
 // ─── THRESHOLDS ──────────────────────────────────────────────────────────────
 export const thresholdsApi = {
-  get: (sensorId: number) => request<any>(`/thresholds/sensor/${sensorId}/`),
-  set: (data: { sensor: number; min_value: number; max_value: number }) =>
+  list: () => request<any[]>('/thresholds/'),
+  set: (data: { device: number; min_value?: number; max_value?: number; trigger_action?: string; target_device?: number | null }) =>
     request('/thresholds/', { method: 'POST', body: JSON.stringify(data) }),
   update: (id: number, data: object) =>
     request(`/thresholds/${id}/`, { method: 'PUT', body: JSON.stringify(data) }),
@@ -144,7 +149,10 @@ export const dashboardApi = {
   summary: () => request<any>('/dashboard/summary/'),
   temperature: () => request<any[]>('/dashboard/temperature/'),
   humidity: () => request<any[]>('/dashboard/humidity/'),
+  light: () => request<any[]>('/dashboard/light/'),
   deviceStatus: () => request<any>('/dashboard/device-status/'),
+  analytics: (params: { scope: 'floor' | 'room'; metric: 'temperature' | 'humidity' | 'light' | 'device_activity'; period: 'day' | 'month' | 'year' }) =>
+    request<any>(`/dashboard/analytics/?scope=${params.scope}&metric=${params.metric}&period=${params.period}`),
 };
 
 // ─── IOT TOKENS (admin quản lý) ──────────────────────────────────────────────
