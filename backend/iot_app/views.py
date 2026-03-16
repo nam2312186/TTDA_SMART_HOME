@@ -10,7 +10,7 @@ from monitoring_app.models import SensorData
 from monitoring_app.views import _check_threshold
 from iot_app.broadcast import broadcast_sensor_update
 from logs_app.utils import create_activity_log
-from logs_app.models import ActivityLog
+from devices_app.models import Sensor
 
 
 def _get_device_by_token(request):
@@ -49,23 +49,20 @@ class IoTPushView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         value = serializer.validated_data['value']
-        unit = serializer.validated_data.get('unit') or device.unit or ''
-        metric = serializer.validated_data.get('metric') or device.device_subtype
+        sensor = Sensor.objects.filter(device=device).first()
+        if sensor is None:
+            return Response({'error': 'Device chưa có sensor trong bảng sensors'}, status=status.HTTP_400_BAD_REQUEST)
 
-        data = SensorData.objects.create(device=device, value=value, unit=unit, metric=metric)
-        device.current_value = value
-        device.unit = unit or device.unit
-        device.last_reading_at = timezone.now()
-        device.save(update_fields=['current_value', 'unit', 'last_reading_at', 'updated_at'])
+        unit = serializer.validated_data.get('unit') or ''
+        metric = serializer.validated_data.get('metric') or sensor.sensor_type
+
+        data = SensorData.objects.create(sensor=sensor, value=value, unit=unit)
         _check_threshold(data, source='device')
-        broadcast_sensor_update(device.device_id, value, unit, device.device_id, metric)
+        broadcast_sensor_update(sensor.sensor_id, value, unit, device.device_id, metric)
         create_activity_log(
             device=device,
-            source=ActivityLog.SOURCE_DEVICE,
-            category='automation',
             action='iot_sensor_data_received',
-            details=f'Nhận dữ liệu {metric}: {value}{unit}',
-            metadata={'device_id': device.device_id, 'metric': metric, 'data_id': data.data_id, 'value': value},
+            details=f'Received {metric}: {value}{unit}',
         )
 
         return Response({
@@ -92,6 +89,10 @@ class IoTPushBatchView(APIView):
         if device is None:
             return Response({'error': 'Token không hợp lệ'}, status=status.HTTP_401_UNAUTHORIZED)
 
+        sensor = Sensor.objects.filter(device=device).first()
+        if sensor is None:
+            return Response({'error': 'Device chưa có sensor trong bảng sensors'}, status=status.HTTP_400_BAD_REQUEST)
+
         if not isinstance(request.data, list):
             return Response({'error': 'Body phải là array'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -101,30 +102,19 @@ class IoTPushBatchView(APIView):
             if not s.is_valid():
                 results.append({'error': s.errors})
                 continue
-            metric = s.validated_data.get('metric') or device.device_subtype
-            unit = s.validated_data.get('unit') or device.unit or ''
+            metric = s.validated_data.get('metric') or sensor.sensor_type
+            unit = s.validated_data.get('unit') or ''
             data = SensorData.objects.create(
-                device=device,
+                sensor=sensor,
                 value=s.validated_data['value'],
                 unit=unit,
-                metric=metric,
             )
-            device.current_value = s.validated_data['value']
-            device.unit = unit or device.unit
-            device.last_reading_at = timezone.now()
-            device.save(update_fields=['current_value', 'unit', 'last_reading_at', 'updated_at'])
             _check_threshold(data, source='device')
-            broadcast_sensor_update(device.device_id, data.value, unit, device.device_id, metric)
+            broadcast_sensor_update(sensor.sensor_id, data.value, unit, device.device_id, metric)
             create_activity_log(
                 device=device,
-                source=ActivityLog.SOURCE_DEVICE,
-                category='automation',
                 action='iot_sensor_data_received',
-                details=(
-                    f'Nhận dữ liệu batch {metric}: '
-                    f'{s.validated_data["value"]}{unit}'
-                ),
-                metadata={'device_id': device.device_id, 'metric': metric, 'data_id': data.data_id},
+                details=f'Received batch {metric}: {s.validated_data["value"]}{unit}',
             )
             results.append({'data_id': data.data_id, 'device_id': device.device_id, 'metric': metric, 'ok': True})
 

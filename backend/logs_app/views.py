@@ -7,12 +7,6 @@ from .serializers import ActivityLogSerializer
 class LogListView(APIView):
     def get(self, request):
         logs = ActivityLog.objects.select_related('user', 'device', 'device__room', 'device__room__floor').all()
-        category = request.query_params.get('category')
-        source = request.query_params.get('source')
-        if category:
-            logs = logs.filter(category=category)
-        if source:
-            logs = logs.filter(source=source)
         return Response(ActivityLogSerializer(logs, many=True).data)
 
 

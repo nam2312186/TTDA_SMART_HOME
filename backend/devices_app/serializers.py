@@ -14,18 +14,12 @@ class DeviceSerializer(serializers.ModelSerializer):
             'device_id',
             'device_name',
             'device_type',
-            'device_subtype',
             'room',
             'room_name',
             'floor_name',
             'status',
-            'description',
-            'unit',
-            'current_value',
-            'last_reading_at',
             'threshold',
             'created_at',
-            'updated_at',
         ]
 
     def get_room_name(self, obj):
@@ -37,16 +31,15 @@ class DeviceSerializer(serializers.ModelSerializer):
         return None
 
     def get_threshold(self, obj):
-        threshold = getattr(obj, 'threshold', None)
+        sensor = obj.sensors.first()
+        threshold = sensor.thresholds.first() if sensor else None
         if not threshold:
             return None
         return {
             'threshold_id': threshold.threshold_id,
+            'sensor': threshold.sensor_id,
             'min_value': threshold.min_value,
             'max_value': threshold.max_value,
-            'trigger_action': threshold.trigger_action,
-            'target_device': threshold.target_device_id,
-            'target_device_name': threshold.target_device.device_name if threshold.target_device else None,
         }
 
     def create(self, validated_data):
@@ -64,24 +57,25 @@ class DeviceSerializer(serializers.ModelSerializer):
 
     def _upsert_threshold(self, device, payload):
         if device.device_type != Device.TYPE_SENSOR:
-            Threshold.objects.filter(device=device).delete()
+            sensor = device.sensors.first()
+            if sensor:
+                Threshold.objects.filter(sensor=sensor).delete()
             return
         if not isinstance(payload, dict):
             return
+        sensor = device.sensors.first()
+        if not sensor:
+            return
         min_value = payload.get('min_value')
         max_value = payload.get('max_value')
-        trigger_action = payload.get('trigger_action', Threshold.ACTION_NONE)
-        target_device_id = payload.get('target_device')
-        if min_value in (None, '') and max_value in (None, '') and trigger_action == Threshold.ACTION_NONE and not target_device_id:
-            Threshold.objects.filter(device=device).delete()
+        if min_value in (None, '') and max_value in (None, ''):
+            Threshold.objects.filter(sensor=sensor).delete()
             return
         Threshold.objects.update_or_create(
-            device=device,
+            sensor=sensor,
             defaults={
                 'min_value': min_value,
                 'max_value': max_value,
-                'trigger_action': trigger_action,
-                'target_device_id': target_device_id,
             },
         )
 

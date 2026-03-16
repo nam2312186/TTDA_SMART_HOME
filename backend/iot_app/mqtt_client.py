@@ -25,9 +25,8 @@ def _handle_sensor_data(device_id: int, payload: dict):
     """Lưu dữ liệu cảm biến vào DB và kiểm tra threshold."""
     from monitoring_app.models import SensorData
     from monitoring_app.views import _check_threshold
-    from devices_app.models import Device
+    from devices_app.models import Device, Sensor
     from iot_app.broadcast import broadcast_sensor_update
-    from logs_app.models import ActivityLog
     from logs_app.utils import create_activity_log
 
     value = payload.get('value')
@@ -44,24 +43,20 @@ def _handle_sensor_data(device_id: int, payload: dict):
         logger.warning(f'MQTT: device_id={device_id} không tồn tại')
         return
 
-    metric = metric or device.device_subtype
-    unit = unit or device.unit or ''
-    data = SensorData.objects.create(device=device, value=float(value), unit=unit, metric=metric)
-    device.current_value = float(value)
-    device.unit = unit or device.unit
-    from django.utils import timezone
-    device.last_reading_at = timezone.now()
-    device.save(update_fields=['current_value', 'unit', 'last_reading_at', 'updated_at'])
+    sensor = Sensor.objects.filter(device=device).first()
+    if not sensor:
+        logger.warning(f'MQTT: device_id={device_id} chưa có sensor record')
+        return
+
+    metric = metric or sensor.sensor_type
+    data = SensorData.objects.create(sensor=sensor, value=float(value), unit=unit)
     logger.info(f'MQTT: Lưu data_id={data.data_id} device={device_id} value={value}{unit}')
     create_activity_log(
         device=device,
-        source=ActivityLog.SOURCE_DEVICE,
-        category='automation',
         action='mqtt_sensor_data_received',
-        details=f'Nhận MQTT {metric}: {value}{unit}',
-        metadata={'device_id': device_id, 'metric': metric, 'data_id': data.data_id},
+        details=f'MQTT {metric}: {value}{unit}',
     )
-    broadcast_sensor_update(device.device_id, float(value), unit, device.device_id, metric)
+    broadcast_sensor_update(sensor.sensor_id, float(value), unit, device.device_id, metric)
 
     alert = _check_threshold(data, source='device')
     if alert:
@@ -71,7 +66,6 @@ def _handle_sensor_data(device_id: int, payload: dict):
 def _handle_device_status(device_id: int, payload: dict):
     """Cập nhật trạng thái thiết bị từ MQTT."""
     from devices_app.models import Device
-    from logs_app.models import ActivityLog
     from logs_app.utils import create_activity_log
     try:
         device = Device.objects.get(pk=device_id)
@@ -79,11 +73,8 @@ def _handle_device_status(device_id: int, payload: dict):
         device.save(update_fields=['status'])
         create_activity_log(
             device=device,
-            source=ActivityLog.SOURCE_DEVICE,
-            category='automation',
             action='mqtt_device_status_updated',
-            details=f'Thiết bị "{device.device_name}" cập nhật trạng thái → {device.status}',
-            metadata={'device_id': device_id},
+            details=f'Device "{device.device_name}" status -> {device.status}',
         )
         logger.info(f'MQTT: Device {device_id} status → {device.status}')
     except Device.DoesNotExist:

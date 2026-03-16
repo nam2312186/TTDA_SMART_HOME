@@ -2,7 +2,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from django.shortcuts import get_object_or_404
-from .models import Floor, Room, UserRoomPermission
+from .models import Floor, Room
 from .serializers import FloorSerializer, RoomSerializer
 from users_app.models import User
 from logs_app.utils import create_activity_log
@@ -29,7 +29,7 @@ def _require_admin(request):
 
 class FloorListView(APIView):
     def get(self, request):
-        floors = Floor.objects.all().order_by('level', 'floor_id')
+        floors = Floor.objects.all().order_by('floor_id')
         return Response(FloorSerializer(floors, many=True).data)
 
     def post(self, request):
@@ -41,10 +41,8 @@ class FloorListView(APIView):
             floor = serializer.save(user=admin_user)
             create_activity_log(
                 request=request,
-                category='floor',
                 action='floor_created',
-                details=f'Tạo tầng "{floor.floor_name}" (level {floor.level})',
-                metadata={'floor_id': floor.floor_id},
+                details=f'Created floor "{floor.floor_name}"',
             )
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -61,19 +59,13 @@ class FloorDetailView(APIView):
             return error
         floor = get_object_or_404(Floor, pk=pk)
         before_name = floor.floor_name
-        before_level = floor.level
         serializer = FloorSerializer(floor, data=request.data, partial=True)
         if serializer.is_valid():
             updated = serializer.save()
             create_activity_log(
                 request=request,
-                category='floor',
                 action='floor_updated',
-                details=(
-                    f'Cập nhật tầng "{before_name}" → "{updated.floor_name}" '
-                    f'(level {before_level} → {updated.level})'
-                ),
-                metadata={'floor_id': updated.floor_id},
+                details=f'Updated floor "{before_name}" -> "{updated.floor_name}"',
             )
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -85,10 +77,8 @@ class FloorDetailView(APIView):
         floor = get_object_or_404(Floor, pk=pk)
         create_activity_log(
             request=request,
-            category='floor',
             action='floor_deleted',
-            details=f'Xóa tầng "{floor.floor_name}"',
-            metadata={'floor_id': floor.floor_id},
+            details=f'Deleted floor "{floor.floor_name}"',
         )
         floor.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -108,10 +98,8 @@ class RoomListView(APIView):
             room = serializer.save(user=admin_user)
             create_activity_log(
                 request=request,
-                category='room',
                 action='room_created',
-                details=f'Tạo phòng "{room.room_name}" thuộc tầng "{room.floor.floor_name}"',
-                metadata={'room_id': room.room_id, 'floor_id': room.floor_id},
+                details=f'Created room "{room.room_name}" on floor "{room.floor.floor_name}"',
             )
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -134,13 +122,8 @@ class RoomDetailView(APIView):
             updated = serializer.save()
             create_activity_log(
                 request=request,
-                category='room',
                 action='room_updated',
-                details=(
-                    f'Cập nhật phòng "{before_name}" → "{updated.room_name}" '
-                    f'(tầng {before_floor} → {updated.floor.floor_name})'
-                ),
-                metadata={'room_id': updated.room_id, 'floor_id': updated.floor_id},
+                details=f'Updated room "{before_name}" -> "{updated.room_name}" (floor {before_floor} -> {updated.floor.floor_name})',
             )
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -152,10 +135,8 @@ class RoomDetailView(APIView):
         room = get_object_or_404(Room, pk=pk)
         create_activity_log(
             request=request,
-            category='room',
             action='room_deleted',
-            details=f'Xóa phòng "{room.room_name}" thuộc tầng "{room.floor.floor_name}"',
-            metadata={'room_id': room.room_id, 'floor_id': room.floor_id},
+            details=f'Deleted room "{room.room_name}" from floor "{room.floor.floor_name}"',
         )
         room.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -165,47 +146,3 @@ class FloorRoomsView(APIView):
     def get(self, request, floor_id):
         rooms = Room.objects.filter(floor_id=floor_id)
         return Response(RoomSerializer(rooms, many=True).data)
-
-
-class UserRoomPermissionView(APIView):
-    """
-    GET  /api/users/<user_id>/room-permissions/  → list room IDs the user has access to
-    POST /api/users/<user_id>/room-permissions/  → set (replace) full list of permitted room IDs
-    """
-    def get(self, request, user_id):
-        user = get_object_or_404(User, pk=user_id)
-        perms = UserRoomPermission.objects.filter(user=user).select_related('room')
-        data = [
-            {'room_id': p.room.room_id, 'room_name': p.room.room_name, 'floor_id': p.room.floor_id}
-            for p in perms
-        ]
-        return Response(data)
-
-    def post(self, request, user_id):
-        """Replace the user's room permissions with the provided list of room_ids."""
-        _, error = _require_admin(request)
-        if error:
-            return error
-        user = get_object_or_404(User, pk=user_id)
-        room_ids = request.data.get('room_ids', [])
-        if not isinstance(room_ids, list):
-            return Response({'error': 'room_ids must be a list'}, status=status.HTTP_400_BAD_REQUEST)
-        # Delete existing and create new ones
-        UserRoomPermission.objects.filter(user=user).delete()
-        for rid in room_ids:
-            room = Room.objects.filter(pk=rid).first()
-            if room:
-                UserRoomPermission.objects.get_or_create(user=user, room=room)
-        create_activity_log(
-            request=request,
-            category='user',
-            action='permissions_updated',
-            details=f'Cập nhật quyền phòng cho user "{user.username}" ({len(room_ids)} phòng)',
-            metadata={'target_user_id': user.user_id, 'room_ids': room_ids},
-        )
-        perms = UserRoomPermission.objects.filter(user=user).select_related('room')
-        data = [
-            {'room_id': p.room.room_id, 'room_name': p.room.room_name, 'floor_id': p.room.floor_id}
-            for p in perms
-        ]
-        return Response(data)

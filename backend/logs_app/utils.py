@@ -37,20 +37,12 @@ def create_activity_log(
 ) -> ActivityLog:
     resolved_user = user or _resolve_user_from_request(request)
 
-    if source is None:
-        if resolved_user:
-            source = ActivityLog.SOURCE_USER
-        elif device:
-            source = ActivityLog.SOURCE_DEVICE
-        else:
-            source = ActivityLog.SOURCE_SYSTEM
+    full_action = action
+    if details:
+        full_action = f'{action} | {details}'
 
     return ActivityLog.objects.create(
         user=resolved_user,
         device=device,
-        source=source,
-        category=category,
-        action=action,
-        details=details,
-        metadata=metadata or {},
+        action=full_action,
     )

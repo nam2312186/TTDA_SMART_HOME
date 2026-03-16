@@ -93,6 +93,10 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 _db_engine = os.environ.get("DB_ENGINE", "django.db.backends.sqlite3")
 
+# Khi dùng SQLite3 (dev), Django tự tạo bảng qua migrate.
+# Khi dùng PostgreSQL (prod), bảng do schema ngoài quản lý nên managed=False.
+MANAGED_DB_TABLES = (_db_engine == "django.db.backends.sqlite3")
+
 if _db_engine == "django.db.backends.sqlite3":
     DATABASES = {
         'default': {

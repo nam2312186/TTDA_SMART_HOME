@@ -6,7 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from building_app.models import Floor, Room
-from devices_app.models import Device
+from devices_app.models import Device, Sensor
 from logs_app.models import ActivityLog
 from monitoring_app.models import Alert, SensorData
 
@@ -21,24 +21,23 @@ PERIOD_MAP = {
 class DashboardSummaryView(APIView):
     def get(self, request):
         total_devices = Device.objects.count()
-        sensor_devices = Device.objects.filter(device_type=Device.TYPE_SENSOR).count()
+        sensor_devices = Sensor.objects.count()
         actuator_devices = Device.objects.filter(device_type=Device.TYPE_ACTUATOR).count()
         devices_on = Device.objects.filter(status=True).count()
         active_alerts = Alert.objects.filter(is_read=False).count()
 
         floor_stats = []
         room_stats = []
-        floors = Floor.objects.order_by('level', 'floor_id')
+        floors = Floor.objects.order_by('floor_id')
         for floor in floors:
             floor_rooms = Room.objects.filter(floor=floor)
             room_count = floor_rooms.count()
             device_count = Device.objects.filter(room__floor=floor).count()
-            sensor_count = Device.objects.filter(room__floor=floor, device_type=Device.TYPE_SENSOR).count()
+            sensor_count = Sensor.objects.filter(device__room__floor=floor).count()
             actuator_count = Device.objects.filter(room__floor=floor, device_type=Device.TYPE_ACTUATOR).count()
             floor_stats.append({
                 'floor_id': floor.floor_id,
                 'floor_name': floor.floor_name,
-                'level': floor.level,
                 'room_count': room_count,
                 'device_count': device_count,
                 'sensor_count': sensor_count,
@@ -51,7 +50,7 @@ class DashboardSummaryView(APIView):
                     'floor_id': floor.floor_id,
                     'floor_name': floor.floor_name,
                     'device_count': Device.objects.filter(room=room).count(),
-                    'sensor_count': Device.objects.filter(room=room, device_type=Device.TYPE_SENSOR).count(),
+                    'sensor_count': Sensor.objects.filter(device__room=room).count(),
                     'actuator_count': Device.objects.filter(room=room, device_type=Device.TYPE_ACTUATOR).count(),
                 })
 
@@ -71,10 +70,11 @@ class DashboardMetricView(APIView):
     metric_name = ''
 
     def get(self, request):
-        sensor_data = SensorData.objects.select_related('device').filter(metric=self.metric_name)
+        sensor_data = SensorData.objects.select_related('sensor', 'sensor__device', 'sensor__device__room', 'sensor__device__room__floor').filter(sensor__sensor_type=self.metric_name)
         result = []
-        for device in Device.objects.filter(device_type=Device.TYPE_SENSOR, device_subtype=self.metric_name):
-            records = sensor_data.filter(device=device).order_by('-recorded_at')[:24]
+        for sensor in Sensor.objects.select_related('device', 'device__room', 'device__room__floor').filter(sensor_type=self.metric_name):
+            device = sensor.device
+            records = sensor_data.filter(sensor=sensor).order_by('-recorded_at')[:24]
             result.append({
                 'device_id': device.device_id,
                 'device_name': device.device_name,
@@ -108,14 +108,10 @@ class DashboardDeviceStatusView(APIView):
                 'device_id': device.device_id,
                 'device_name': device.device_name,
                 'device_type': device.device_type,
-                'device_subtype': device.device_subtype,
                 'status': device.status,
-                'current_value': device.current_value,
-                'unit': device.unit,
                 'room_name': device.room.room_name if device.room else None,
                 'floor_name': device.room.floor.floor_name if device.room and device.room.floor else None,
                 'created_at': device.created_at,
-                'last_reading_at': device.last_reading_at,
             }
             for device in devices
         ])
@@ -137,9 +133,7 @@ class DashboardAnalyticsView(APIView):
         records_by_scope = defaultdict(list)
 
         if metric == 'device_activity':
-            logs = ActivityLog.objects.select_related('device', 'device__room', 'device__room__floor').filter(
-                category__in=['device', 'automation']
-            )
+            logs = ActivityLog.objects.select_related('device', 'device__room', 'device__room__floor').filter(device__isnull=False)
             grouped = logs.annotate(bucket=trunc('action_time')).values(
                 'bucket',
                 'device__room__room_id',
@@ -158,18 +152,18 @@ class DashboardAnalyticsView(APIView):
                     'value': item['value'],
                 })
         else:
-            data = SensorData.objects.select_related('device', 'device__room', 'device__room__floor').filter(metric=metric)
+            data = SensorData.objects.select_related('sensor', 'sensor__device', 'sensor__device__room', 'sensor__device__room__floor').filter(sensor__sensor_type=metric)
             grouped = data.annotate(bucket=trunc('recorded_at')).values(
                 'bucket',
-                'device__room__room_id',
-                'device__room__room_name',
-                'device__room__floor__floor_id',
-                'device__room__floor__floor_name',
+                'sensor__device__room__room_id',
+                'sensor__device__room__room_name',
+                'sensor__device__room__floor__floor_id',
+                'sensor__device__room__floor__floor_name',
                 'unit',
             ).annotate(value=Avg('value')).order_by('bucket')
             for item in grouped:
-                scope_id = item['device__room__floor__floor_id'] if scope == 'floor' else item['device__room__room_id']
-                scope_name = item['device__room__floor__floor_name'] if scope == 'floor' else item['device__room__room_name']
+                scope_id = item['sensor__device__room__floor__floor_id'] if scope == 'floor' else item['sensor__device__room__room_id']
+                scope_name = item['sensor__device__room__floor__floor_name'] if scope == 'floor' else item['sensor__device__room__room_name']
                 if not scope_id:
                     continue
                 records_by_scope[str(scope_id)].append({

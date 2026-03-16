@@ -4,7 +4,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from devices_app.models import Device
+from devices_app.models import Sensor
 from iot_app.broadcast import broadcast_alert, broadcast_sensor_update
 from logs_app.models import ActivityLog
 from logs_app.utils import create_activity_log
@@ -13,39 +13,9 @@ from .models import Alert, SensorData, Threshold
 from .serializers import AlertSerializer, SensorDataSerializer, ThresholdSerializer
 
 
-def _apply_threshold_action(threshold, source='system'):
-    target_device = threshold.target_device or threshold.device
-    if threshold.trigger_action == Threshold.ACTION_NONE or not target_device:
-        return None
-
-    if threshold.trigger_action == Threshold.ACTION_TURN_ON:
-        target_device.status = True
-    elif threshold.trigger_action == Threshold.ACTION_TURN_OFF:
-        target_device.status = False
-    elif threshold.trigger_action == Threshold.ACTION_TOGGLE:
-        target_device.status = not target_device.status
-    else:
-        return None
-
-    target_device.save(update_fields=['status', 'updated_at'])
-    create_activity_log(
-        device=target_device,
-        source=ActivityLog.SOURCE_SYSTEM if source == 'system' else ActivityLog.SOURCE_DEVICE,
-        category='automation',
-        action='threshold_action_executed',
-        details=f'Tự động {threshold.trigger_action} thiết bị "{target_device.device_name}" do vượt ngưỡng của "{threshold.device.device_name}"',
-        metadata={
-            'trigger_device_id': threshold.device_id,
-            'target_device_id': target_device.device_id,
-            'trigger_action': threshold.trigger_action,
-        },
-    )
-    return target_device
-
-
 def _check_threshold(entry, source='system'):
-    threshold = getattr(entry.device, 'threshold', None)
-    if not threshold:
+    threshold = Threshold.objects.filter(sensor=entry.sensor).first()
+    if threshold is None:
         return None
 
     value = entry.value
@@ -62,65 +32,42 @@ def _check_threshold(entry, source='system'):
     if direction is None:
         return None
 
-    target_device = _apply_threshold_action(threshold, source=source)
+    device = entry.sensor.device
     message = (
-        f'{entry.device.device_name} ({entry.metric or entry.device.device_subtype}) '
+        f'{device.device_name} ({entry.sensor.sensor_type}) '
         f'ghi nhận {value}{entry.unit or ""} '
         f'{"cao hơn" if direction == Alert.DIRECTION_HIGH else "thấp hơn"} '
         f'ngưỡng {threshold_value}{entry.unit or ""}'
     )
     alert = Alert.objects.create(
-        device=entry.device,
-        threshold=threshold,
-        threshold_direction=direction,
-        threshold_value=threshold_value,
-        actual_value=value,
-        metric=entry.metric or entry.device.device_subtype,
-        unit=entry.unit,
-        triggered_action=threshold.trigger_action,
-        target_device=target_device,
+        sensor=entry.sensor,
         message=message,
-        metadata={
-            'device_id': entry.device_id,
-            'metric': entry.metric or entry.device.device_subtype,
-            'actual_value': value,
-            'threshold_value': threshold_value,
-            'trigger_action': threshold.trigger_action,
-            'target_device_id': target_device.device_id if target_device else None,
-        },
     )
     create_activity_log(
-        device=entry.device,
-        source=ActivityLog.SOURCE_DEVICE if source == 'device' else ActivityLog.SOURCE_SYSTEM,
-        category='alert',
+        device=device,
         action='threshold_alert_created',
         details=message,
-        metadata=alert.metadata,
     )
-    broadcast_alert(alert.alert_id, entry.device_id, message)
+    broadcast_alert(alert.alert_id, entry.sensor_id, message, device.device_id)
     return alert
 
 
 class SensorDataListView(APIView):
     def get(self, request):
-        device_id = request.query_params.get('device')
-        data = SensorData.objects.select_related('device', 'device__room', 'device__room__floor').all()
-        if device_id:
-            data = data.filter(device_id=device_id)
+        sensor_id = request.query_params.get('sensor')
+        data = SensorData.objects.select_related('sensor', 'sensor__device', 'sensor__device__room', 'sensor__device__room__floor').all()
+        if sensor_id:
+            data = data.filter(sensor_id=sensor_id)
         serializer = SensorDataSerializer(data, many=True)
         return Response(serializer.data)
 
     def post(self, request):
         serializer = SensorDataSerializer(data=request.data)
         if serializer.is_valid():
-            entry = serializer.save(metric=serializer.validated_data.get('metric') or serializer.validated_data['device'].device_subtype)
-            device = entry.device
-            device.current_value = entry.value
-            device.unit = entry.unit or device.unit
-            device.last_reading_at = timezone.now()
-            device.save(update_fields=['current_value', 'unit', 'last_reading_at', 'updated_at'])
+            entry = serializer.save()
             _check_threshold(entry)
-            broadcast_sensor_update(device.device_id, entry.value, entry.unit or '', device.device_id, entry.metric)
+            device = entry.sensor.device
+            broadcast_sensor_update(entry.sensor_id, entry.value, entry.unit or '', device.device_id, entry.sensor.sensor_type)
             return Response(SensorDataSerializer(entry).data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -128,9 +75,9 @@ class SensorDataListView(APIView):
 class SensorDataLatestView(APIView):
     def get(self, request):
         latest = []
-        devices = Device.objects.filter(device_type=Device.TYPE_SENSOR)
-        for device in devices:
-            entry = SensorData.objects.filter(device=device).first()
+        sensors = Sensor.objects.select_related('device').all()
+        for sensor in sensors:
+            entry = SensorData.objects.filter(sensor=sensor).first()
             if entry:
                 latest.append(entry)
         serializer = SensorDataSerializer(latest, many=True)
@@ -139,14 +86,14 @@ class SensorDataLatestView(APIView):
 
 class SensorDataBySensorView(APIView):
     def get(self, request, sensor_id):
-        data = SensorData.objects.filter(device_id=sensor_id)
+        data = SensorData.objects.filter(sensor_id=sensor_id)
         serializer = SensorDataSerializer(data, many=True)
         return Response(serializer.data)
 
 
 class ThresholdListView(APIView):
     def get(self, request):
-        thresholds = Threshold.objects.select_related('device', 'target_device').all()
+        thresholds = Threshold.objects.select_related('sensor', 'sensor__device').all()
         serializer = ThresholdSerializer(thresholds, many=True)
         return Response(serializer.data)
 
@@ -175,21 +122,21 @@ class ThresholdDetailView(APIView):
 
 class AlertListView(APIView):
     def get(self, request):
-        alerts = Alert.objects.select_related('device', 'device__room', 'device__room__floor', 'target_device').all()
+        alerts = Alert.objects.select_related('sensor', 'sensor__device', 'sensor__device__room', 'sensor__device__room__floor').all()
         serializer = AlertSerializer(alerts, many=True)
         return Response(serializer.data)
 
 
 class AlertUnreadListView(APIView):
     def get(self, request):
-        alerts = Alert.objects.select_related('device', 'device__room', 'device__room__floor', 'target_device').filter(is_read=False)
+        alerts = Alert.objects.select_related('sensor', 'sensor__device', 'sensor__device__room', 'sensor__device__room__floor').filter(is_read=False)
         serializer = AlertSerializer(alerts, many=True)
         return Response(serializer.data)
 
 
 class AlertDetailView(APIView):
     def get(self, request, pk):
-        alert = get_object_or_404(Alert.objects.select_related('device', 'device__room', 'device__room__floor', 'target_device'), pk=pk)
+        alert = get_object_or_404(Alert.objects.select_related('sensor', 'sensor__device', 'sensor__device__room', 'sensor__device__room__floor'), pk=pk)
         serializer = AlertSerializer(alert)
         return Response(serializer.data)
 
