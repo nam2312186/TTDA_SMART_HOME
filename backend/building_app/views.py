@@ -38,11 +38,11 @@ class FloorListView(APIView):
             return error
         serializer = FloorSerializer(data=request.data)
         if serializer.is_valid():
-            floor = serializer.save(user=admin_user)
+            room = serializer.save()
             create_activity_log(
                 request=request,
                 action='floor_created',
-                details=f'Created floor "{floor.floor_name}"',
+                details=f'Created floor "{room.floor_name}"',
             )
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -95,7 +95,7 @@ class RoomListView(APIView):
             return error
         serializer = RoomSerializer(data=request.data)
         if serializer.is_valid():
-            room = serializer.save(user=admin_user)
+            room = serializer.save()
             create_activity_log(
                 request=request,
                 action='room_created',

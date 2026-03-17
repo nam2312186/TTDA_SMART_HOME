@@ -1,3 +1,4 @@
+import secrets
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -10,11 +11,12 @@ from monitoring_app.models import SensorData
 from monitoring_app.views import _check_threshold
 from iot_app.broadcast import broadcast_sensor_update
 from logs_app.utils import create_activity_log
-from devices_app.models import Sensor
 
 
 def _get_device_by_token(request):
     """Xác thực IoT device qua header Authorization: Token <token>."""
+    # Lưu ý cho team IoT: token này được điền trong firmware ESP32/Arduino,
+    # BE không hard-code token trong source code.
     auth = request.headers.get('Authorization', '')
     if not auth.startswith('Token '):
         return None
@@ -28,7 +30,7 @@ def _get_device_by_token(request):
         return None
 
 
-# ─── IoT Push Data ────────────────────────────────────────────────────────────
+# ─── IoT Push Data ──────────────────────────────────────────────────────
 
 class IoTPushView(APIView):
     """
@@ -37,6 +39,7 @@ class IoTPushView(APIView):
     Body: { "value": 25.5, "unit": "°C", "metric": "temperature" }
 
     Thiết bị IoT gọi endpoint này để gửi dữ liệu cảm biến lên hệ thống.
+    Chỗ điền giá trị thật nằm ở firmware: SERVER_URL, IOT_TOKEN, metric.
     """
     def post(self, request):
         device = _get_device_by_token(request)
@@ -49,16 +52,12 @@ class IoTPushView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         value = serializer.validated_data['value']
-        sensor = Sensor.objects.filter(device=device).first()
-        if sensor is None:
-            return Response({'error': 'Device chưa có sensor trong bảng sensors'}, status=status.HTTP_400_BAD_REQUEST)
-
         unit = serializer.validated_data.get('unit') or ''
-        metric = serializer.validated_data.get('metric') or sensor.sensor_type
+        metric = serializer.validated_data.get('metric') or (device.type.name_type if device.type else 'sensor')
 
-        data = SensorData.objects.create(sensor=sensor, value=value, unit=unit)
+        data = SensorData.objects.create(device=device, value=value, unit=unit)
         _check_threshold(data, source='device')
-        broadcast_sensor_update(sensor.sensor_id, value, unit, device.device_id, metric)
+        broadcast_sensor_update(device.device_id, value, unit, device.device_id, metric)
         create_activity_log(
             device=device,
             action='iot_sensor_data_received',
@@ -89,10 +88,6 @@ class IoTPushBatchView(APIView):
         if device is None:
             return Response({'error': 'Token không hợp lệ'}, status=status.HTTP_401_UNAUTHORIZED)
 
-        sensor = Sensor.objects.filter(device=device).first()
-        if sensor is None:
-            return Response({'error': 'Device chưa có sensor trong bảng sensors'}, status=status.HTTP_400_BAD_REQUEST)
-
         if not isinstance(request.data, list):
             return Response({'error': 'Body phải là array'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -102,15 +97,15 @@ class IoTPushBatchView(APIView):
             if not s.is_valid():
                 results.append({'error': s.errors})
                 continue
-            metric = s.validated_data.get('metric') or sensor.sensor_type
+            metric = s.validated_data.get('metric') or (device.type.name_type if device.type else 'sensor')
             unit = s.validated_data.get('unit') or ''
             data = SensorData.objects.create(
-                sensor=sensor,
+                device=device,
                 value=s.validated_data['value'],
                 unit=unit,
             )
             _check_threshold(data, source='device')
-            broadcast_sensor_update(sensor.sensor_id, data.value, unit, device.device_id, metric)
+            broadcast_sensor_update(device.device_id, data.value, unit, device.device_id, metric)
             create_activity_log(
                 device=device,
                 action='iot_sensor_data_received',
@@ -121,7 +116,7 @@ class IoTPushBatchView(APIView):
         return Response(results, status=status.HTTP_201_CREATED)
 
 
-# ─── Token Management ─────────────────────────────────────────────────────────
+# ─── Token Management ──────────────────────────────────────────────────────────
 
 class IoTTokenListView(APIView):
     """GET /api/iot/tokens/ — danh sách token | POST — tạo token cho device."""
@@ -158,10 +153,10 @@ class IoTTokenDetailView(APIView):
 
 
 class IoTTokenRegenerateView(APIView):
-    """POST /api/iot/tokens/{id}/regenerate/ — tạo lại token mới."""
+    """POST /api/iot/tokens/{id}/regenerate/"""
+
     def post(self, request, pk):
-        import secrets
         token = get_object_or_404(IoTToken, pk=pk)
         token.token = secrets.token_hex(32)
-        token.save()
-        return Response({'token': token.token, 'message': 'Token đã được tạo lại'})
+        token.save(update_fields=['token'])
+        return Response(IoTTokenSerializer(token).data, status=status.HTTP_200_OK)

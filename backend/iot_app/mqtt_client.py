@@ -7,6 +7,10 @@ Thiết bị IoT publish lên các topic:
   smarthome/device/{device_id}/status               → {"status": true/false}
 
 Chạy: python manage.py mqtt_listen
+
+Ghi chú cấu hình:
+- MQTT host/port/user/pass điền trong file /.env (không hard-code ở đây).
+- WiFi/token/URL gửi dữ liệu được điền ở firmware thiết bị.
 """
 
 import json
@@ -25,7 +29,7 @@ def _handle_sensor_data(device_id: int, payload: dict):
     """Lưu dữ liệu cảm biến vào DB và kiểm tra threshold."""
     from monitoring_app.models import SensorData
     from monitoring_app.views import _check_threshold
-    from devices_app.models import Device, Sensor
+    from devices_app.models import Device
     from iot_app.broadcast import broadcast_sensor_update
     from logs_app.utils import create_activity_log
 
@@ -43,20 +47,15 @@ def _handle_sensor_data(device_id: int, payload: dict):
         logger.warning(f'MQTT: device_id={device_id} không tồn tại')
         return
 
-    sensor = Sensor.objects.filter(device=device).first()
-    if not sensor:
-        logger.warning(f'MQTT: device_id={device_id} chưa có sensor record')
-        return
-
-    metric = metric or sensor.sensor_type
-    data = SensorData.objects.create(sensor=sensor, value=float(value), unit=unit)
+    metric = metric or (device.type.name_type if device.type else 'sensor')
+    data = SensorData.objects.create(device=device, value=float(value), unit=unit)
     logger.info(f'MQTT: Lưu data_id={data.data_id} device={device_id} value={value}{unit}')
     create_activity_log(
         device=device,
         action='mqtt_sensor_data_received',
         details=f'MQTT {metric}: {value}{unit}',
     )
-    broadcast_sensor_update(sensor.sensor_id, float(value), unit, device.device_id, metric)
+    broadcast_sensor_update(device.device_id, float(value), unit, device.device_id, metric)
 
     alert = _check_threshold(data, source='device')
     if alert:

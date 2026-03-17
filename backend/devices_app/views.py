@@ -6,13 +6,26 @@ from rest_framework.views import APIView
 from iot_app.broadcast import broadcast_device_status
 from logs_app.utils import create_activity_log
 
-from .models import Device, Sensor
-from .serializers import DeviceSerializer, SensorSerializer
+from .models import Device, DeviceType
+from .serializers import DeviceSerializer, DeviceTypeSerializer
+
+
+class DeviceTypeListView(APIView):
+    def get(self, request):
+        types = DeviceType.objects.all()
+        return Response(DeviceTypeSerializer(types, many=True).data)
+
+    def post(self, request):
+        serializer = DeviceTypeSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class DeviceListView(APIView):
     def get(self, request):
-        devices = Device.objects.select_related('room', 'room__floor').all()
+        devices = Device.objects.select_related('room', 'room__floor', 'type', 'threshold').all()
         serializer = DeviceSerializer(devices, many=True)
         return Response(serializer.data)
 
@@ -24,7 +37,7 @@ class DeviceListView(APIView):
                 request=request,
                 device=device,
                 action='device_created',
-                details=f'Created device "{device.device_name}" ({device.device_type}) in room {device.room.room_name}',
+                details=f'Created device "{device.device_name}" in room {device.room.room_name}',
             )
             return Response(DeviceSerializer(device).data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -32,15 +45,13 @@ class DeviceListView(APIView):
 
 class DeviceDetailView(APIView):
     def get(self, request, pk):
-        device = get_object_or_404(Device.objects.select_related('room', 'room__floor'), pk=pk)
+        device = get_object_or_404(Device.objects.select_related('room', 'room__floor', 'type', 'threshold'), pk=pk)
         serializer = DeviceSerializer(device)
         return Response(serializer.data)
 
     def put(self, request, pk):
         device = get_object_or_404(Device, pk=pk)
         old_name = device.device_name
-        old_status = device.status
-        old_room_id = device.room_id
         serializer = DeviceSerializer(device, data=request.data, partial=True)
         if serializer.is_valid():
             updated = serializer.save()
@@ -69,7 +80,7 @@ class DeviceDetailView(APIView):
 
 class RoomDeviceListView(APIView):
     def get(self, request, room_id):
-        devices = Device.objects.select_related('room', 'room__floor').filter(room_id=room_id)
+        devices = Device.objects.select_related('room', 'room__floor', 'type', 'threshold').filter(room_id=room_id)
         serializer = DeviceSerializer(devices, many=True)
         return Response(serializer.data)
 
@@ -109,36 +120,12 @@ class DeviceToggleView(APIView):
         device = get_object_or_404(Device, pk=pk)
         device.status = not device.status
         device.save(update_fields=['status'])
+        action = 'device_turned_on' if device.status else 'device_turned_off'
         create_activity_log(
             request=request,
             device=device,
-            action='device_toggled',
-            details=f'Toggled "{device.device_name}" -> {"on" if device.status else "off"}',
+            action=action,
+            details=f'Toggled "{device.device_name}" -> {device.status}',
         )
         broadcast_device_status(device.device_id, device.status, device.device_name)
         return Response({'message': f'{device.device_name} toggled', 'status': device.status})
-
-
-class SensorListView(APIView):
-    def get(self, request):
-        sensors = Sensor.objects.select_related('device').all()
-        serializer = SensorSerializer(sensors, many=True)
-        return Response(serializer.data)
-
-    def post(self, request):
-        serializer = SensorSerializer(data=request.data)
-        if serializer.is_valid():
-            sensor = serializer.save()
-            return Response(SensorSerializer(sensor).data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-class SensorDetailView(APIView):
-    def get(self, request, pk):
-        sensor = get_object_or_404(Sensor.objects.select_related('device'), pk=pk)
-        return Response(SensorSerializer(sensor).data)
-
-    def delete(self, request, pk):
-        sensor = get_object_or_404(Sensor, pk=pk)
-        sensor.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)

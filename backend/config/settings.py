@@ -36,6 +36,7 @@ ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1").split(","
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -162,7 +163,7 @@ CHANNEL_LAYERS = {
     }
 }
 
-# ─── MQTT cấu hình (đánh dấu bằng .env) ────────────────────────
+# ─── MQTT cấu hình (điền ở file /.env, KHÔNG hard-code ở đây) ─────────────
 MQTT_BROKER = os.environ.get('MQTT_BROKER', 'localhost')
 MQTT_PORT = int(os.environ.get('MQTT_PORT', 1883))
 MQTT_USERNAME = os.environ.get('MQTT_USERNAME', None)

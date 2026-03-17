@@ -3,16 +3,16 @@ from datetime import time
 from django.contrib.auth.hashers import make_password
 from django.core.management.base import BaseCommand
 
-from automation_app.models import Schedule
-from building_app.models import Floor, Room
-from devices_app.models import Device, Sensor
+from automation_app.models import AutomationRule, IsMonitor, Schedule
+from building_app.models import Floor, Room, RoomManagement
+from devices_app.models import Device, DeviceType
 from logs_app.models import ActivityLog
 from monitoring_app.models import Alert, SensorData, Threshold
 from users_app.models import Role, User
 
 
 class Command(BaseCommand):
-    help = 'Seed data aligned with PostgreSQL schema'
+    help = 'Seed data aligned with schema'
 
     def add_arguments(self, parser):
         parser.add_argument('--reset', action='store_true', help='Delete existing app data before seeding')
@@ -22,16 +22,20 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING('Resetting data...'))
             Alert.objects.all().delete()
             SensorData.objects.all().delete()
-            Threshold.objects.all().delete()
+            IsMonitor.objects.all().delete()
+            AutomationRule.objects.all().delete()
             Schedule.objects.all().delete()
             ActivityLog.objects.all().delete()
-            Sensor.objects.all().delete()
             Device.objects.all().delete()
+            Threshold.objects.all().delete()
+            RoomManagement.objects.all().delete()
             Room.objects.all().delete()
             Floor.objects.all().delete()
             User.objects.all().delete()
             Role.objects.all().delete()
+            DeviceType.objects.all().delete()
 
+        # --- Roles & Users ---
         admin_role, _ = Role.objects.get_or_create(role_name='admin')
         user_role, _ = Role.objects.get_or_create(role_name='user')
 
@@ -52,61 +56,72 @@ class Command(BaseCommand):
             },
         )
 
-        floor1, _ = Floor.objects.get_or_create(floor_name='Floor 1 - Common', defaults={'user': admin_user})
-        floor2, _ = Floor.objects.get_or_create(floor_name='Floor 2 - Private', defaults={'user': admin_user})
+        # --- Device Types ---
+        type_sensor, _ = DeviceType.objects.get_or_create(name_type='sensor')
+        type_actuator, _ = DeviceType.objects.get_or_create(name_type='actuator')
+        type_temp, _ = DeviceType.objects.get_or_create(name_type='temperature')
+        type_humidity, _ = DeviceType.objects.get_or_create(name_type='humidity')
+        type_light, _ = DeviceType.objects.get_or_create(name_type='light')
+        type_fan, _ = DeviceType.objects.get_or_create(name_type='fan')
 
-        living_room, _ = Room.objects.get_or_create(room_name='Living Room', floor=floor1, defaults={'user': normal_user})
-        kitchen, _ = Room.objects.get_or_create(room_name='Kitchen', floor=floor1, defaults={'user': normal_user})
-        bedroom, _ = Room.objects.get_or_create(room_name='Bedroom', floor=floor2, defaults={'user': normal_user})
+        # --- Floor & Room (1 tang, 1 phong demo IoT) ---
+        floor1, _ = Floor.objects.get_or_create(floor_name='Floor 1 - Demo')
+        living_room, _ = Room.objects.get_or_create(room_name='Demo Room', floor=floor1)
 
-        temp_device, _ = Device.objects.get_or_create(
-            device_name='Living Room Temp Sensor Device',
-            defaults={'device_type': Device.TYPE_SENSOR, 'room': living_room, 'status': True},
+        # --- Room Management ---
+        RoomManagement.objects.get_or_create(user=normal_user, room=living_room)
+
+        # --- Thresholds (standalone, tao truoc device) ---
+        temp_threshold, _ = Threshold.objects.get_or_create(
+            pk=1, defaults={'min_value': 18.0, 'max_value': 30.0}
         )
-        humid_device, _ = Device.objects.get_or_create(
-            device_name='Living Room Humidity Sensor Device',
-            defaults={'device_type': Device.TYPE_SENSOR, 'room': living_room, 'status': True},
+        humid_threshold, _ = Threshold.objects.get_or_create(
+            pk=2, defaults={'min_value': 35.0, 'max_value': 80.0}
         )
-        light_device, _ = Device.objects.get_or_create(
-            device_name='Kitchen Light Sensor Device',
-            defaults={'device_type': Device.TYPE_SENSOR, 'room': kitchen, 'status': True},
-        )
-        fan_device, _ = Device.objects.get_or_create(
-            device_name='Bedroom Fan',
-            defaults={'device_type': Device.TYPE_ACTUATOR, 'room': bedroom, 'status': False},
-        )
-
-        temp_sensor, _ = Sensor.objects.get_or_create(sensor_type='temperature', device=temp_device)
-        humid_sensor, _ = Sensor.objects.get_or_create(sensor_type='humidity', device=humid_device)
-        light_sensor, _ = Sensor.objects.get_or_create(sensor_type='light', device=light_device)
-
-        SensorData.objects.get_or_create(sensor=temp_sensor, value=25.9, unit='C')
-        SensorData.objects.get_or_create(sensor=humid_sensor, value=61.0, unit='%')
-        SensorData.objects.get_or_create(sensor=light_sensor, value=210.0, unit='lux')
-
-        Threshold.objects.get_or_create(sensor=temp_sensor, defaults={'min_value': 18.0, 'max_value': 30.0})
-        Threshold.objects.get_or_create(sensor=humid_sensor, defaults={'min_value': 35.0, 'max_value': 80.0})
-        Threshold.objects.get_or_create(sensor=light_sensor, defaults={'min_value': 100.0, 'max_value': 500.0})
-
-        Alert.objects.get_or_create(
-            sensor=temp_sensor,
-            message='Temperature exceeded threshold in Living Room',
-            defaults={'is_read': False},
+        light_threshold, _ = Threshold.objects.get_or_create(
+            pk=3, defaults={'min_value': 100.0, 'max_value': 500.0}
         )
 
+        # --- Devices ---
+        temp_device, _ = Device.objects.update_or_create(
+            device_name='Demo Temp Sensor Device',
+            defaults={'type': type_temp, 'room': living_room, 'status': True, 'threshold': temp_threshold},
+        )
+        humid_device, _ = Device.objects.update_or_create(
+            device_name='Demo Humidity Sensor Device',
+            defaults={'type': type_humidity, 'room': living_room, 'status': True, 'threshold': humid_threshold},
+        )
+        light_device, _ = Device.objects.update_or_create(
+            device_name='Demo Light Sensor Device',
+            defaults={'type': type_light, 'room': living_room, 'status': True, 'threshold': light_threshold},
+        )
+        fan_device, _ = Device.objects.update_or_create(
+            device_name='Demo Mini Fan',
+            defaults={'type': type_fan, 'room': living_room, 'status': False, 'threshold': None},
+        )
+
+        # --- Schedule (room-based theo schema moi) ---
         Schedule.objects.get_or_create(
-            device=fan_device,
+            room=living_room,
             action='off',
             schedule_time=time(hour=22, minute=30),
             repeat_type='daily',
             defaults={'status': True},
         )
 
+        # --- Automation Rule ---
+        rule, _ = AutomationRule.objects.get_or_create(
+            action='turn_on_fan',
+            defaults={'status': True, 'threshold': temp_threshold},
+        )
+        IsMonitor.objects.get_or_create(device=fan_device, rule=rule)
+
+        # --- Activity Log ---
         ActivityLog.objects.get_or_create(
             user=admin_user,
             device=fan_device,
             action='seed_data_initialized',
         )
 
-        self.stdout.write(self.style.SUCCESS('Seed complete (schema-aligned).'))
+        self.stdout.write(self.style.SUCCESS('Seed complete (schema-aligned, no IoT sample readings).'))
         self.stdout.write('Default accounts: admin@smarthome.com / 123456, user@smarthome.com / 123456')

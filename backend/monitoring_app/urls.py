@@ -1,15 +1,15 @@
 from django.urls import path
 from .views import (
-    SensorDataListView, SensorDataLatestView, SensorDataBySensorView,
+    SensorDataListView, SensorDataLatestView, SensorDataByDeviceView,
     ThresholdListView, ThresholdDetailView,
-    AlertListView, AlertUnreadListView, AlertDetailView, AlertMarkReadView,
+    AlertListView, AlertDetailView,
 )
 
 urlpatterns = [
     # Sensor Data
     path("sensor-data/", SensorDataListView.as_view()),
     path("sensor-data/latest/", SensorDataLatestView.as_view()),
-    path("sensor-data/<int:sensor_id>/", SensorDataBySensorView.as_view()),
+    path("sensor-data/device/<int:device_id>/", SensorDataByDeviceView.as_view()),
 
     # Thresholds
     path("thresholds/", ThresholdListView.as_view()),
@@ -17,8 +17,5 @@ urlpatterns = [
 
     # Alerts
     path("alerts/", AlertListView.as_view()),
-    path("alerts/unread/", AlertUnreadListView.as_view()),
     path("alerts/<int:pk>/", AlertDetailView.as_view()),
-    path("alerts/<int:pk>/read/", AlertMarkReadView.as_view()),
-    path("alerts/<int:pk>/mark-read/", AlertMarkReadView.as_view()),
 ]

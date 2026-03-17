@@ -1,0 +1,23 @@
+#ifndef DEVICE_CONFIG_HTTP_H
+#define DEVICE_CONFIG_HTTP_H
+
+// TODO-HTTP-1: WiFi cua noi dat board
+#define WIFI_SSID "YOUR_WIFI_SSID"
+#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+
+// TODO-HTTP-2: URL BE nhan du lieu IoT
+// Local LAN example: http://192.168.1.100:8000/api/iot/push/
+// Deploy example:    https://your-domain/api/iot/push/
+#define SERVER_URL "http://YOUR_BACKEND_IP:8000/api/iot/push/"
+
+// TODO-HTTP-3: Token 64 ky tu lay tu API /api/iot/tokens/
+#define IOT_TOKEN "YOUR_IOT_TOKEN_64_CHARS"
+
+// TODO-HTTP-4: Metric phai khop sensor_type trong DB
+// Allowed examples: temperature | humidity | light
+#define METRIC_NAME "temperature"
+
+// Optional: chu ky gui data (ms)
+#define SEND_INTERVAL_MS 10000
+
+#endif
