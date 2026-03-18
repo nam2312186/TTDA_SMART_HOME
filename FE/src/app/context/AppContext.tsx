@@ -10,7 +10,7 @@ import {
   Home,
   AuditLog,
 } from '../types';
-import { buildingApi, devicesApi, alertsApi, schedulesApi, permissionsApi, logsApi, usersApi, connectSensorWebSocket } from '../services/api';
+import { buildingApi, devicesApi, alertsApi, schedulesApi, permissionsApi, logsApi, usersApi, connectSensorWebSocket, sensorDataApi } from '../services/api';
 
 function mapFloor(f: any): Floor {
   return {
@@ -268,7 +268,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // ─── Fetch all data from API ─────────────────────────────────────────────────
   const fetchAll = useCallback(async () => {
     try {
-      const [floors, rooms, devices, alertsList, schedulesList, usersList, deviceTypesRes] = await Promise.all([
+      const [floors, rooms, devices, alertsList, schedulesList, usersList, deviceTypesRes, latestSensorData] = await Promise.all([
         buildingApi.floors().catch(() => []),
         buildingApi.rooms().catch(() => []),
         devicesApi.list().catch(() => []),
@@ -276,10 +276,33 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         schedulesApi.list().catch(() => []),
         usersApi.list().catch(() => []),
         devicesApi.types().catch(() => []),
+        sensorDataApi.latest().catch(() => []),
       ]);
+
+      const latestByDeviceId = new Map<string, { value: number; unit?: string }>();
+      (latestSensorData as any[]).forEach((entry) => {
+        const deviceId = String(entry.device);
+        const value = Number(entry.value);
+        if (!Number.isFinite(value)) return;
+        if (!latestByDeviceId.has(deviceId)) {
+          latestByDeviceId.set(deviceId, { value, unit: entry.unit || undefined });
+        }
+      });
+
+      const mappedDevices = (devices as any[]).map((raw) => {
+        const mapped = mapDevice(raw);
+        const latest = latestByDeviceId.get(mapped.id);
+        if (!latest) return mapped;
+        return {
+          ...mapped,
+          currentValue: latest.value,
+          unit: latest.unit || mapped.unit,
+        };
+      });
+
       setAllFloors((floors as any[]).map(mapFloor));
       setAllRooms((rooms as any[]).map(mapRoom));
-      setAllDevices((devices as any[]).map(mapDevice));
+      setAllDevices(mappedDevices);
       setDeviceTypes(deviceTypesRes as any[]);
       setAlerts((alertsList as any[]).map(mapAlert));
       setSchedules((schedulesList as any[]).map(mapSchedule));

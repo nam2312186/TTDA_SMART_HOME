@@ -161,7 +161,7 @@ export const AdminDashboardScreen: React.FC<AdminDashboardScreenProps> = ({ onNa
   }, [analytics]);
 
   const realtimeCards = useMemo(() => {
-    return Object.values(realtime)
+    const liveCards = Object.values(realtime)
       .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
       .slice(0, 6)
       .map((item) => {
@@ -170,6 +170,26 @@ export const AdminDashboardScreen: React.FC<AdminDashboardScreenProps> = ({ onNa
         return {
           ...item,
           deviceName: device?.name || `Device ${item.deviceId}`,
+          roomName: room?.name || 'Unknown room',
+        };
+      });
+
+    if (liveCards.length > 0) {
+      return liveCards;
+    }
+
+    return devices
+      .filter((device) => device.type === 'sensor' && typeof device.currentValue === 'number' && Number.isFinite(device.currentValue))
+      .slice(0, 6)
+      .map((device) => {
+        const room = rooms.find((roomEntry) => roomEntry.id === device.roomId);
+        return {
+          deviceId: Number(device.id),
+          metric: device.subType,
+          value: Number(device.currentValue),
+          unit: device.unit || '',
+          updatedAt: device.lastUpdated || new Date(),
+          deviceName: device.name,
           roomName: room?.name || 'Unknown room',
         };
       });
