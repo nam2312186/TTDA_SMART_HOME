@@ -121,10 +121,17 @@ class UserRoomPermissionsView(APIView):
         selected_rooms = {room.room_id: room.room_name for room in rooms}
         added_names = [selected_rooms.get(room_id, str(room_id)) for room_id in added]
         removed_names = [previous_rooms.get(room_id, str(room_id)) for room_id in removed]
+        detail_segments = [f'Updated room permissions for "{user.username}".']
+        if added_names:
+            added_text = ', '.join([f'"{name}"' for name in added_names])
+            detail_segments.append(f'Added rooms: {added_text}.')
+        if removed_names:
+            removed_text = ', '.join([f'"{name}"' for name in removed_names])
+            detail_segments.append(f'Removed rooms: {removed_text}.')
         create_activity_log(
             request=request,
             action='room_permissions_updated',
-            details=f'Updated room permissions for "{user.username}" | added_rooms={added_names} removed_rooms={removed_names}',
+            details=' '.join(detail_segments),
         )
 
         updated = (

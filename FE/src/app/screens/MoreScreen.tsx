@@ -37,6 +37,12 @@ export const MoreScreen: React.FC<MoreScreenProps> = ({
       onClick: () => onNavigate('reports'),
     },
     {
+      icon: FileText,
+      label: isAdmin ? 'Audit Logs' : 'My Audit Logs',
+      description: isAdmin ? 'User and automatic device actions' : 'View your activity and device logs',
+      onClick: () => onNavigate('auditLogs'),
+    },
+    {
       icon: Settings,
       label: 'Settings',
       description: 'App preferences',
@@ -74,12 +80,6 @@ export const MoreScreen: React.FC<MoreScreenProps> = ({
       label: 'Manage Floors & Rooms',
       description: 'Add/edit floors and rooms',
       onClick: () => onNavigate('manageAreas'),
-    },
-    {
-      icon: FileText,
-      label: 'Audit Logs',
-      description: 'User and automatic device actions',
-      onClick: () => onNavigate('auditLogs'),
     },
   ];
 

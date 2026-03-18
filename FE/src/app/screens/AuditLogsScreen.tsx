@@ -10,6 +10,46 @@ interface AuditLogsScreenProps {
 
 type TimeRange = 'all' | 'today' | '7d' | '30d' | 'custom';
 
+function parseListValue(raw: string): string[] {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return [];
+  const inner = trimmed.slice(1, -1).trim();
+  if (!inner) return [];
+  return inner
+    .split(',')
+    .map((item) => item.trim().replace(/^['\"]+|['\"]+$/g, ''))
+    .filter(Boolean);
+}
+
+function prettyAuditDetails(action: string, details: string): string {
+  if (action !== 'room_permissions_updated') {
+    return details;
+  }
+
+  const cleaned = String(details || '').trim();
+  const baseText = cleaned.split('|')[0].trim() || 'Updated room permissions.';
+
+  const addedMatch = cleaned.match(/(?:added_rooms|added)\s*=\s*(\[[^\]]*\])/i);
+  const removedMatch = cleaned.match(/(?:removed_rooms|removed)\s*=\s*(\[[^\]]*\])/i);
+
+  if (!addedMatch && !removedMatch) {
+    return cleaned;
+  }
+
+  const addedList = addedMatch ? parseListValue(addedMatch[1]) : [];
+  const removedList = removedMatch ? parseListValue(removedMatch[1]) : [];
+
+  const clauses: string[] = [baseText];
+  if (addedList.length > 0) {
+    clauses.push(`Added rooms: ${addedList.join(', ')}.`);
+  }
+  if (removedList.length > 0) {
+    clauses.push(`Removed rooms: ${removedList.join(', ')}.`);
+  }
+
+  return clauses.join(' ');
+}
+
 export const AuditLogsScreen: React.FC<AuditLogsScreenProps> = ({ onBack }) => {
   const { auditLogs, users, floors, rooms, devices } = useApp();
   const [filterCategory, setFilterCategory] = useState<string>('all');
@@ -281,6 +321,7 @@ export const AuditLogsScreen: React.FC<AuditLogsScreenProps> = ({ onBack }) => {
           filteredLogs.map((log) => {
             const Icon = getCategoryIcon(log.category);
             const ownerName = getOwnerName(log);
+            const readableDetails = prettyAuditDetails(log.action, log.details);
             return (
               <Card key={log.id} className="hover:shadow-sm transition-shadow">
                 <CardContent className="p-4">
@@ -295,7 +336,7 @@ export const AuditLogsScreen: React.FC<AuditLogsScreenProps> = ({ onBack }) => {
                           {log.category}
                         </Badge>
                       </div>
-                      <p className="text-sm text-gray-600 mb-2">{log.details}</p>
+                      <p className="text-sm text-gray-600 mb-2">{readableDetails}</p>
                       {ownerName && (
                         <p className="text-xs text-indigo-700 mb-2">
                           Owner: <span className="font-medium">{ownerName}</span>

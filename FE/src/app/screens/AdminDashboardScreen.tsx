@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, Building2, FileText, Layers3, Thermometer, Droplets, SunMedium, Wifi } from 'lucide-react';
 import { BarChart, Bar, CartesianGrid, LabelList, LineChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 import { Badge } from '../components/ui/badge';
+import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
 import { useApp } from '../context/AppContext';
 import { connectSensorWebSocket, dashboardApi } from '../services/api';
@@ -52,44 +53,60 @@ export const AdminDashboardScreen: React.FC<AdminDashboardScreenProps> = ({ onNa
   const [period, setPeriod] = useState<PeriodKey>('day');
   const [analytics, setAnalytics] = useState<any[]>([]);
   const [realtime, setRealtime] = useState<Record<string, RealtimeCard>>({});
+  const refreshTimerRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    let mounted = true;
+  const loadAnalytics = useCallback(() => {
     dashboardApi.analytics({ scope, metric, period })
       .then((response) => {
-        if (!mounted) return;
         setAnalytics(response.series || []);
       })
       .catch(() => {
-        if (!mounted) return;
         setAnalytics([]);
       });
-
-    return () => {
-      mounted = false;
-    };
   }, [scope, metric, period]);
 
   useEffect(() => {
+    loadAnalytics();
+  }, [loadAnalytics]);
+
+  useEffect(() => {
     const socket = connectSensorWebSocket((message: any) => {
-      if (message?.event !== 'sensor_data') return;
-      const key = String(message.device_id || message.sensor_id);
-      const value = Number(message.value);
-      if (!Number.isFinite(value)) return;
-      setRealtime((prev) => ({
-        ...prev,
-        [key]: {
-          deviceId: Number(message.device_id || message.sensor_id),
-          metric: message.metric || 'sensor',
-          value,
-          unit: message.unit || '',
-          updatedAt: new Date(),
-        },
-      }));
+      const eventType = message?.event;
+      if (eventType === 'sensor_data') {
+        const key = String(message.device_id || message.sensor_id);
+        const value = Number(message.value);
+        if (!Number.isFinite(value)) return;
+        setRealtime((prev) => ({
+          ...prev,
+          [key]: {
+            deviceId: Number(message.device_id || message.sensor_id),
+            metric: message.metric || 'sensor',
+            value,
+            unit: message.unit || '',
+            updatedAt: new Date(),
+          },
+        }));
+      }
+
+      if (eventType === 'sensor_data' || eventType === 'alert' || eventType === 'device_status') {
+        if (refreshTimerRef.current) {
+          window.clearTimeout(refreshTimerRef.current);
+        }
+        refreshTimerRef.current = window.setTimeout(() => {
+          refreshTimerRef.current = null;
+          loadAnalytics();
+        }, 500);
+      }
     });
 
-    return () => socket.close();
-  }, []);
+    return () => {
+      socket.close();
+      if (refreshTimerRef.current) {
+        window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+    };
+  }, [loadAnalytics]);
 
   const summaryCards = [
     {
@@ -161,6 +178,36 @@ export const AdminDashboardScreen: React.FC<AdminDashboardScreenProps> = ({ onNa
   const activeMetric = METRIC_OPTIONS.find((option) => option.value === metric) || METRIC_OPTIONS[0];
   const ActiveMetricIcon = activeMetric.icon;
 
+  const sensorAverages = useMemo(() => {
+    const averageByMetric = (metricName: 'temperature' | 'humidity' | 'light') => {
+      const values = devices
+        .filter((device) => device.type === 'sensor' && device.subType === metricName)
+        .map((device) => {
+          const realtimePoint = realtime[String(device.id)];
+          if (realtimePoint && Number.isFinite(realtimePoint.value)) {
+            return realtimePoint.value;
+          }
+          if (typeof device.currentValue === 'number' && Number.isFinite(device.currentValue)) {
+            return device.currentValue;
+          }
+          return null;
+        })
+        .filter((value): value is number => value !== null);
+
+      if (values.length === 0) {
+        return null;
+      }
+      const sum = values.reduce((acc, value) => acc + value, 0);
+      return Number((sum / values.length).toFixed(1));
+    };
+
+    return {
+      temperature: averageByMetric('temperature'),
+      humidity: averageByMetric('humidity'),
+      light: averageByMetric('light'),
+    };
+  }, [devices, realtime]);
+
   return (
     <div className="h-full overflow-y-auto pb-20 bg-slate-50">
       <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-900 text-white p-6">
@@ -191,6 +238,55 @@ export const AdminDashboardScreen: React.FC<AdminDashboardScreenProps> = ({ onNa
       </div>
 
       <div className="p-4 space-y-4">
+        <Card>
+          <CardContent className="p-4 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Home Sensor Averages</h2>
+                <p className="text-xs text-slate-500">Live average from currently owned devices.</p>
+              </div>
+              <Button
+                onClick={() => onNavigate('detailedVisualization')}
+                className="bg-emerald-600 hover:bg-emerald-700"
+              >
+                View Detailed Visualization
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="rounded-xl border border-orange-200 bg-orange-50 p-3">
+                <div className="flex items-center gap-2 text-orange-700">
+                  <Thermometer className="w-4 h-4" />
+                  <span className="text-xs font-medium">Temperature</span>
+                </div>
+                <p className="mt-2 text-2xl font-bold text-orange-800">
+                  {sensorAverages.temperature !== null ? `${sensorAverages.temperature}°C` : '--'}
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-blue-200 bg-blue-50 p-3">
+                <div className="flex items-center gap-2 text-blue-700">
+                  <Droplets className="w-4 h-4" />
+                  <span className="text-xs font-medium">Humidity</span>
+                </div>
+                <p className="mt-2 text-2xl font-bold text-blue-800">
+                  {sensorAverages.humidity !== null ? `${sensorAverages.humidity}%` : '--'}
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                <div className="flex items-center gap-2 text-amber-700">
+                  <SunMedium className="w-4 h-4" />
+                  <span className="text-xs font-medium">Light</span>
+                </div>
+                <p className="mt-2 text-2xl font-bold text-amber-800">
+                  {sensorAverages.light !== null ? `${sensorAverages.light} lux` : '--'}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
         <Card>
           <CardContent className="p-4 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -248,7 +344,7 @@ export const AdminDashboardScreen: React.FC<AdminDashboardScreenProps> = ({ onNa
               <div className="rounded-2xl border border-slate-100 bg-white p-4">
                 <h3 className="text-sm font-semibold text-slate-900 mb-3">Current values by {scope === 'floor' ? 'floor' : 'room'}</h3>
                 {chartData.length === 0 ? (
-                  <p className="text-sm text-slate-500">Chưa có dữ liệu cho bộ lọc hiện tại.</p>
+                  <p className="text-sm text-slate-500">No data available for the selected filter.</p>
                 ) : (
                   <ResponsiveContainer width="100%" height={260}>
                     <BarChart data={chartData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
@@ -273,7 +369,7 @@ export const AdminDashboardScreen: React.FC<AdminDashboardScreenProps> = ({ onNa
               <div className="rounded-2xl border border-slate-100 bg-white p-4">
                 <h3 className="text-sm font-semibold text-slate-900 mb-3">{activeMetric.label} trend</h3>
                 {trendData.length === 0 ? (
-                  <p className="text-sm text-slate-500">Chưa có chuỗi thời gian để hiển thị.</p>
+                  <p className="text-sm text-slate-500">No timeseries data available.</p>
                 ) : (
                   <ResponsiveContainer width="100%" height={260}>
                     <LineChart data={trendData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>

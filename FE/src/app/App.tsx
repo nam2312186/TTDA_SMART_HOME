@@ -25,6 +25,7 @@ import { RoomPermissionsScreen } from './screens/admin/RoomPermissionsScreen';
 import { AdminManageDevicesScreen } from './screens/admin/AdminManageDevicesScreen';
 import { ManageFloorsScreen } from './screens/admin/ManageFloorsScreen';
 import { AuditLogsScreen } from './screens/AuditLogsScreen';
+import { DetailedVisualizationScreen } from './screens/DetailedVisualizationScreen';
 import { Device, Alert, Schedule } from './types';
 import { Toaster } from './components/ui/sonner';
 
@@ -55,7 +56,8 @@ type Screen =
   | { type: 'roomPermissions'; userId?: string }
   | { type: 'manageDevices' }
   | { type: 'manageAreas' }
-  | { type: 'auditLogs' };
+  | { type: 'auditLogs' }
+  | { type: 'detailedVisualization' };
 
 function MainApp() {
   const { logout, loginContext, currentUser } = useApp();
@@ -160,6 +162,9 @@ function MainApp() {
         break;
       case 'auditLogs':
         newScreen = { type: 'auditLogs' };
+        break;
+      case 'detailedVisualization':
+        newScreen = { type: 'detailedVisualization' };
         break;
       default:
         return;
@@ -381,6 +386,9 @@ function MainApp() {
         )}
         {currentScreen.type === 'auditLogs' && (
           <AuditLogsScreen onBack={handleBack} />
+        )}
+        {currentScreen.type === 'detailedVisualization' && (
+          <DetailedVisualizationScreen onBack={handleBack} />
         )}
       </div>
 

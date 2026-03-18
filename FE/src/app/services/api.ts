@@ -85,6 +85,7 @@ export const buildingApi = {
 // ─── DEVICES ─────────────────────────────────────────────────────────────────
 export const devicesApi = {
   list: () => request<any[]>('/devices/'),
+  types: () => request<any[]>('/device-types/'),
   get: (id: number) => request<any>(`/devices/${id}/`),
   create: (data: object) => request('/devices/', { method: 'POST', body: JSON.stringify(data) }),
   update: (id: number, data: object) => request(`/devices/${id}/`, { method: 'PUT', body: JSON.stringify(data) }),
@@ -97,15 +98,17 @@ export const devicesApi = {
 
 // ─── SENSORS ─────────────────────────────────────────────────────────────────
 export const sensorsApi = {
-  byDevice: (deviceId: number) => request<any[]>(`/devices/${deviceId}/sensors/`),
-  get: (id: number) => request<any>(`/sensors/${id}/`),
-  create: (data: object) => request('/sensors/', { method: 'POST', body: JSON.stringify(data) }),
-  delete: (id: number) => request(`/sensors/${id}/`, { method: 'DELETE' }),
+  byDevice: (deviceId: number) => request<any[]>(`/sensor-data/device/${deviceId}/`),
+  get: (id: number) => request<any[]>(`/sensor-data/device/${id}/`),
+  create: (data: { device: number; value: number; unit?: string }) =>
+    request('/sensor-data/', { method: 'POST', body: JSON.stringify(data) }),
+  delete: (_id: number) => Promise.resolve(undefined),
 };
 
 // ─── SENSOR DATA ─────────────────────────────────────────────────────────────
 export const sensorDataApi = {
-  bySensor: (sensorId: number) => request<any[]>(`/sensor-data/${sensorId}/`),
+  byDevice: (deviceId: number) => request<any[]>(`/sensor-data/device/${deviceId}/`),
+  bySensor: (sensorId: number) => request<any[]>(`/sensor-data/device/${sensorId}/`),
   latest: () => request<any[]>(`/sensor-data/latest/`),
   add: (data: { device: number; value: number; unit?: string; metric?: string }) =>
     request('/sensor-data/', { method: 'POST', body: JSON.stringify(data) }),
@@ -114,8 +117,7 @@ export const sensorDataApi = {
 // ─── ALERTS ──────────────────────────────────────────────────────────────────
 export const alertsApi = {
   list: () => request<any[]>('/alerts/'),
-  unread: () => request<any[]>('/alerts/unread/'),
-  markRead: (id: number) => request(`/alerts/${id}/mark-read/`, { method: 'POST' }),
+  unread: () => request<any[]>('/alerts/'),
   delete: (id: number) => request(`/alerts/${id}/`, { method: 'DELETE' }),
 };
 
@@ -181,7 +183,9 @@ export function connectSensorWebSocket(
   onMessage: (data: any) => void,
   onClose?: () => void,
 ): WebSocket {
-  const wsUrl = `ws://${window.location.hostname}:8000/ws/sensors/`;
+  const envWsUrl = (import.meta as any).env?.VITE_WS_URL as string | undefined;
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  const wsUrl = envWsUrl || `${wsProtocol}://${window.location.hostname}:8000/ws/sensors/`;
   const ws = new WebSocket(wsUrl);
 
   ws.onmessage = (event) => {

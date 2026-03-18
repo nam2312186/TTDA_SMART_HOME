@@ -38,9 +38,11 @@
   - [5. Chạy cùng lúc FE + BE](#5-chạy-cùng-lúc-fe--be)
   - [6. Chạy bằng Docker](#6-chạy-bằng-docker)
   - [7. Tài khoản mặc định](#7-tài-khoản-mặc-định)
-  - [8. Dữ liệu demo \& IoT Token](#8-dữ-liệu-demo--iot-token)
-    - [Đẩy dữ liệu cảm biến (HTTP)](#đẩy-dữ-liệu-cảm-biến-http)
-    - [WebSocket realtime](#websocket-realtime)
+  - [8. Kết nối IoT thật (không dùng data mẫu)](#8-kết-nối-iot-thật-không-dùng-data-mẫu)
+    - [Tạo device và sensor thật](#tạo-device-và-sensor-thật)
+    - [Tạo IoT token bằng API (không cần superadmin)](#tạo-iot-token-bằng-api-không-cần-superadmin)
+    - [Đẩy dữ liệu từ thiết bị thật (HTTP)](#đẩy-dữ-liệu-từ-thiết-bị-thật-http)
+    - [Kiểm tra FE nhận realtime](#kiểm-tra-fe-nhận-realtime)
   - [9. API nhanh](#9-api-nhanh)
   - [Kết nối IoT (ESP32 / Arduino)](#kết-nối-iot-esp32--arduino)
 
@@ -122,11 +124,9 @@ cd backend
 # Áp dụng migration
 python manage.py migrate
 
-# Seed dữ liệu mặc định (roles, users, floors, rooms)
+# Seed dữ liệu cấu trúc (roles, users, floors, rooms, devices)
+# Không seed dữ liệu đo cảm biến mẫu.
 python manage.py seed_data
-
-# (Tùy chọn) Tạo superuser Django admin
-python manage.py createsuperuser
 
 # Chạy server
 python manage.py runserver
@@ -241,50 +241,43 @@ docker compose exec backend python manage.py makemigrations <app_name>
 
 ---
 
-## 8. Dữ liệu demo & IoT Token
+## 8. Kết nối IoT thật (không dùng data mẫu)
 
-Lệnh `seed_data` tự động tạo thêm **4 thiết bị demo** trong phòng Living Room để test luồng cảm biến → ngưỡng → cảnh báo:
+### Tạo device và sensor thật
 
-| Thiết bị | Loại | Chỉ số |
-|----------|------|--------|
-| Living Room Temp Sensor | sensor | temperature |
-| Living Room Humidity Sensor | sensor | humidity |
-| Living Room Light Sensor | sensor | light |
-| Living Room Ventilation Fan | actuator | fan |
+1. Đăng nhập FE bằng tài khoản admin hệ thống có sẵn: `admin@smarthome.com / 123456`.
+2. Tạo Device kiểu `sensor` trong đúng phòng của bạn.
+3. Tạo bản ghi Sensor gắn với Device vừa tạo (ví dụ `temperature`, `humidity`, `light`).
 
-**Ngưỡng mẫu**: khi `temperature > 30°C` → tự động **bật quạt** (`turn_on`).
-
-Sau khi seed, token IoT của từng cảm biến được in ra console. Lấy token để đẩy dữ liệu thật:
+### Tạo IoT token bằng API (không cần superadmin)
 
 ```bash
-# Xem token trong DB
-cd backend
-..\.venv\Scripts\python.exe manage.py shell -c "
-from devices_app.models import IoTToken
-for t in IoTToken.objects.select_related('device').all():
-    print(t.device.device_name, '->', t.token)
-"
+curl -X POST http://localhost:8000/api/iot/tokens/ \
+  -H "Content-Type: application/json" \
+  -d '{"device": 1, "label": "esp32-phong-khach"}'
 ```
 
-### Đẩy dữ liệu cảm biến (HTTP)
+Xem token:
 
 ```bash
-# Ví dụ: đẩy nhiệt độ 28.5°C
-curl -X POST http://localhost:8000/api/iot/data/ \
+curl http://localhost:8000/api/iot/tokens/
+```
+
+### Đẩy dữ liệu từ thiết bị thật (HTTP)
+
+```bash
+curl -X POST http://localhost:8000/api/iot/push/ \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <TOKEN>" \
+  -H "Authorization: Token <TOKEN_64_CHARS>" \
   -d '{"value": 28.5, "unit": "C", "metric": "temperature"}'
 ```
 
-> Khi thiết bị thật đẩy dữ liệu vào, nó sẽ ghi đè `current_value` của chính record đó. Không cần xóa demo data — thiết bị thật tự cập nhật cùng bản ghi.
+### Kiểm tra FE nhận realtime
 
-### WebSocket realtime
-
-```
-ws://localhost:8000/ws/sensors/
-```
-
-Frontend tự subscribe để nhận dữ liệu mới ngay khi IoT push vào.
+1. Mở FE tại http://localhost:5173.
+2. Mở màn hình Dashboard hoặc Alerts.
+3. Gửi payload từ thiết bị thật.
+4. Xác nhận số liệu mới xuất hiện trên FE và lịch sử sensor/alert tăng tương ứng.
 
 ---
 
@@ -299,7 +292,9 @@ Frontend tự subscribe để nhận dữ liệu mới ngay khi IoT push vào.
 | GET | `/api/alerts/` | Danh sách cảnh báo |
 | GET | `/api/schedules/` | Danh sách lịch hẹn |
 | GET | `/api/dashboard/analytics/` | Analytics (query: `scope`, `metric`, `period`) |
-| POST | `/api/iot/data/` | IoT push dữ liệu (Bearer token) |
+| POST | `/api/iot/push/` | IoT push dữ liệu (Token header) |
+| POST | `/api/iot/push/batch/` | IoT push dữ liệu theo lô |
+| GET/POST | `/api/iot/tokens/` | Danh sách / tạo token thiết bị |
 | GET | `/api/floors/` | Danh sách tầng (admin: full CRUD) |
 | GET | `/api/rooms/` | Danh sách phòng (admin: full CRUD) |
 

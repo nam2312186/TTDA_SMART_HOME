@@ -10,7 +10,7 @@ import {
   Home,
   AuditLog,
 } from '../types';
-import { buildingApi, devicesApi, alertsApi, schedulesApi, permissionsApi, logsApi, usersApi } from '../services/api';
+import { buildingApi, devicesApi, alertsApi, schedulesApi, permissionsApi, logsApi, usersApi, connectSensorWebSocket } from '../services/api';
 
 function mapFloor(f: any): Floor {
   return {
@@ -18,7 +18,7 @@ function mapFloor(f: any): Floor {
     name: f.floor_name,
     level: f.level ?? 1,
     roomCount: f.room_count ?? 0,
-    ownerUserId: f.user ? String(f.user) : undefined,
+    ownerUserId: undefined,
     homeId: 'home1',
   };
 }
@@ -28,7 +28,7 @@ function mapRoom(r: any): Room {
     id: String(r.room_id),
     name: r.room_name,
     floorId: String(r.floor),
-    ownerUserId: r.user ? String(r.user) : undefined,
+    ownerUserId: undefined,
     deviceCount: r.device_count ?? 0,
   };
 }
@@ -47,35 +47,37 @@ function mapUser(u: any): User {
 }
 
 function mapDevice(d: any): Device {
+  const rawTypeName = String(d.type_name || '').toLowerCase();
+  const sensorTypes = ['sensor', 'temperature', 'humidity', 'light', 'motion'];
+  const isSensor = sensorTypes.includes(rawTypeName);
+  const mappedType: Device['type'] = isSensor ? 'sensor' : 'actuator';
+  const mappedSubType = isSensor
+    ? (['temperature', 'humidity', 'light', 'motion'].includes(rawTypeName) ? rawTypeName : 'temperature')
+    : (['light', 'fan', 'door'].includes(rawTypeName) ? rawTypeName : 'light');
+  const thresholdData = d.threshold_data || d.threshold;
+
   return {
     id: String(d.device_id),
     name: d.device_name,
-    type: d.device_type,
-    subType: d.device_subtype,
+    type: mappedType,
+    subType: mappedSubType as any,
     roomId: String(d.room),
     isOn: Boolean(d.status),
-    lastUpdated: new Date(d.updated_at || d.created_at || Date.now()),
+    lastUpdated: new Date(d.created_at || Date.now()),
     description: d.description,
     currentValue: typeof d.current_value === 'number' ? d.current_value : undefined,
     unit: d.unit || undefined,
-    threshold: d.threshold
+    threshold: thresholdData
       ? {
-          id: String(d.threshold.threshold_id),
-          min: d.threshold.min_value ?? undefined,
-          max: d.threshold.max_value ?? undefined,
-          action: d.threshold.trigger_action,
-          targetDeviceId: d.threshold.target_device ? String(d.threshold.target_device) : undefined,
-          targetDeviceName: d.threshold.target_device_name || undefined,
+          id: String(thresholdData.threshold_id),
+          min: thresholdData.min_value ?? undefined,
+          max: thresholdData.max_value ?? undefined,
         }
       : undefined,
   };
 }
 
 function mapAlert(a: any): Alert {
-  const direction = a.threshold_direction as 'low' | 'high' | undefined;
-  const gap = typeof a.actual_value === 'number' && typeof a.threshold_value === 'number'
-    ? Math.abs(a.actual_value - a.threshold_value)
-    : 0;
   return {
     id: String(a.alert_id),
     deviceId: a.device ? String(a.device) : '',
@@ -83,76 +85,87 @@ function mapAlert(a: any): Alert {
     roomName: a.room_name || 'Unknown Room',
     floorName: a.floor_name || undefined,
     type: 'threshold_exceeded',
-    severity: gap >= 10 ? 'high' : gap >= 5 ? 'medium' : 'low',
+    severity: 'medium',
     message: a.message,
-    metric: a.metric || undefined,
-    thresholdDirection: direction,
-    thresholdValue: a.threshold_value ?? undefined,
-    actualValue: a.actual_value ?? undefined,
-    unit: a.unit || undefined,
-    triggeredAction: a.triggered_action || 'none',
-    targetDeviceId: a.target_device ? String(a.target_device) : undefined,
-    targetDeviceName: a.target_device_name || undefined,
-    metadata: a.metadata || {},
+    actualValue: a.value ?? undefined,
     timestamp: new Date(a.created_at || Date.now()),
-    cleared: Boolean(a.is_read),
+    cleared: false,
     homeId: 'home1',
   };
 }
 
 function mapSchedule(s: any): Schedule {
-  const daysOfWeek = Array.isArray(s.days_of_week)
-    ? s.days_of_week
-    : s.repeat_type === 'weekend'
+  const daysOfWeek = s.repeat_type === 'weekend'
     ? [0, 6]
     : s.repeat_type === 'weekday'
     ? [1, 2, 3, 4, 5]
     : s.repeat_type === 'once'
     ? []
     : [0, 1, 2, 3, 4, 5, 6];
-  const scopeType = s.scope_type === 'room' ? 'room' : 'device';
-  const scopeId = scopeType === 'room' ? s.room : s.device;
-  const scopeName = s.scope_name || (scopeType === 'room' ? s.room_name : s.device_name) || '';
+  const scopeId = s.room;
+  const scopeName = s.room_name || '';
   return {
     id: String(s.schedule_id),
-    name: s.name || `${scopeName} – ${s.action}`,
+    name: `${scopeName} – ${s.action}`,
     enabled: Boolean(s.status),
-    scope: { type: scopeType, id: String(scopeId), name: scopeName },
+    scope: { type: 'room', id: String(scopeId), name: scopeName },
     action: s.action === 'toggle' ? 'toggle' : s.action === 'on' ? 'on' : 'off',
     time: s.schedule_time || '00:00',
     daysOfWeek,
-    createdAt: new Date(s.created_at || Date.now()),
+    createdAt: new Date(Date.now()),
     homeId: 'home1',
   };
 }
 
 function mapAuditLog(log: any): AuditLog {
+  const rawAction = String(log.action || 'unknown_action');
+  const actionParts = rawAction.split(' | ');
+  const actionName = actionParts.shift();
+  const detailsPart = actionParts.join(' | ');
+
+  let source: AuditLog['source'] = 'system';
+  if (log.user) source = 'user';
+  else if (log.device) source = 'device';
+
+  const actionForCategory = actionName || rawAction;
+  let category: AuditLog['category'] = 'system';
+  if (actionForCategory.startsWith('device_') || actionForCategory.includes('mqtt_device')) category = 'device';
+  else if (actionForCategory.startsWith('room_') || actionForCategory.includes('permission')) category = 'room';
+  else if (actionForCategory.startsWith('floor_')) category = 'floor';
+  else if (actionForCategory.startsWith('schedule_')) category = 'schedule';
+  else if (actionForCategory.includes('alert') || actionForCategory.includes('threshold')) category = 'alert';
+  else if (actionForCategory.startsWith('user_')) category = 'user';
+
   return {
     id: String(log.log_id),
     timestamp: new Date(log.action_time || Date.now()),
     userId: log.user ? String(log.user) : undefined,
-    userName: log.user_name || (log.source === 'device' ? 'Auto Device' : 'System'),
-    source: log.source || 'system',
-    action: log.action || 'unknown_action',
-    category: log.category || 'system',
-    entityType: (log.metadata?.entity_type || log.category) as any,
+    userName: log.user_name || (source === 'device' ? 'Auto Device' : 'System'),
+    source,
+    action: actionName || rawAction,
+    category,
+    entityType: category as any,
     entityId: log.device ? String(log.device) : undefined,
     entityName: log.device_name || log.room_name || log.floor_name,
     deviceName: log.device_name || undefined,
     roomName: log.room_name || undefined,
     floorName: log.floor_name || undefined,
-    details: log.details || log.action || '',
+    details: detailsPart || actionName || rawAction,
     homeId: 'home1',
     homeName: 'Smart Home',
   };
 }
 
 function mapHistoryLog(log: any): HistoryLog {
-  const category = log.category || 'system';
+  const action = String(log.action || '');
   let eventType: HistoryLog['eventType'] = 'system';
-  if (category === 'device') eventType = 'manual_control';
-  if (category === 'schedule') eventType = 'scheduled_action';
-  if (category === 'alert') eventType = 'threshold_alert';
+  if (action.startsWith('device_')) eventType = 'manual_control';
+  if (action.startsWith('schedule_')) eventType = 'scheduled_action';
+  if (action.includes('alert') || action.includes('threshold')) eventType = 'threshold_alert';
+
+  const historyParts = String(log.action || '').split(' | ');
+  historyParts.shift();
+  const detailsPart = historyParts.join(' | ');
 
   return {
     id: String(log.log_id),
@@ -161,7 +174,7 @@ function mapHistoryLog(log: any): HistoryLog {
     deviceName: log.device_name || 'Unknown Device',
     roomName: log.room_name || 'Unknown Room',
     eventType,
-    details: log.details || log.action || '',
+    details: detailsPart || action || '',
     userId: log.user ? String(log.user) : undefined,
     userName: log.user_name || undefined,
     homeId: 'home1',
@@ -245,6 +258,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [allFloors, setAllFloors] = useState<Floor[]>([]);
   const [allRooms, setAllRooms] = useState<Room[]>([]);
   const [allDevices, setAllDevices] = useState<Device[]>([]);
+  const [deviceTypes, setDeviceTypes] = useState<any[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [historyLogs, setHistoryLogs] = useState<HistoryLog[]>([]);
@@ -254,17 +268,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // ─── Fetch all data from API ─────────────────────────────────────────────────
   const fetchAll = useCallback(async () => {
     try {
-      const [floors, rooms, devices, alertsList, schedulesList, usersList] = await Promise.all([
+      const [floors, rooms, devices, alertsList, schedulesList, usersList, deviceTypesRes] = await Promise.all([
         buildingApi.floors().catch(() => []),
         buildingApi.rooms().catch(() => []),
         devicesApi.list().catch(() => []),
         alertsApi.list().catch(() => []),
         schedulesApi.list().catch(() => []),
         usersApi.list().catch(() => []),
+        devicesApi.types().catch(() => []),
       ]);
       setAllFloors((floors as any[]).map(mapFloor));
       setAllRooms((rooms as any[]).map(mapRoom));
       setAllDevices((devices as any[]).map(mapDevice));
+      setDeviceTypes(deviceTypesRes as any[]);
       setAlerts((alertsList as any[]).map(mapAlert));
       setSchedules((schedulesList as any[]).map(mapSchedule));
       setUsers((usersList as any[]).map(mapUser));
@@ -284,6 +300,48 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     fetchAll();
   }, [fetchAll, currentUser?.id]);
+
+  // Global realtime bridge: khi IoT push vào BE, FE sẽ refresh data ngay
+  // để mọi màn hình đều thấy thay đổi, không chỉ riêng dashboard admin.
+  useEffect(() => {
+    let ws: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+    let refreshTimer: number | null = null;
+
+    const scheduleRefresh = () => {
+      if (refreshTimer) return;
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = null;
+        fetchAll();
+      }, 400);
+    };
+
+    const connect = () => {
+      ws = connectSensorWebSocket(
+        (message: any) => {
+          const eventType = message?.event;
+          if (eventType === 'sensor_data' || eventType === 'alert' || eventType === 'device_status') {
+            scheduleRefresh();
+          }
+        },
+        () => {
+          if (reconnectTimer) return;
+          reconnectTimer = window.setTimeout(() => {
+            reconnectTimer = null;
+            connect();
+          }, 2000);
+        }
+      );
+    };
+
+    connect();
+
+    return () => {
+      if (refreshTimer) window.clearTimeout(refreshTimer);
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      ws?.close();
+    };
+  }, [fetchAll]);
 
   useEffect(() => {
     const handleFocus = () => {
@@ -355,10 +413,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const canAccessRoom = (roomId: string): boolean => {
     if (!currentUser) return false;
     if (currentUser.role === 'admin') return true;
-    const room = allRooms.find((r) => r.id === roomId);
-    const floor = room ? allFloors.find((f) => f.id === room.floorId) : undefined;
-    const isOwner = room?.ownerUserId === currentUser.id || floor?.ownerUserId === currentUser.id;
-    return Boolean(isOwner || currentUser.roomPermissions?.includes(roomId));
+    return Boolean(currentUser.roomPermissions?.includes(roomId));
   };
 
   const canAccessDevice = (deviceId: string): boolean => {
@@ -371,11 +426,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const floors = useMemo(() => {
     if (!currentUser) return [];
     if (currentUser.role === 'admin') return allFloors;
-    // Show floors that user owns OR has at least one accessible room
-    return allFloors.filter((f) =>
-      f.ownerUserId === currentUser.id ||
-      allRooms.some((r) => r.floorId === f.id && canAccessRoom(r.id))
-    );
+    return allFloors.filter((f) => allRooms.some((r) => r.floorId === f.id && canAccessRoom(r.id)));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, allFloors, allRooms]);
 
@@ -389,39 +440,28 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const auditLogs = useMemo(() => {
     if (!currentUser) return [];
     if (currentUser.role === 'admin') return allAuditLogs;
-
-    const ownedFloorIds = new Set(
-      allFloors.filter((f) => f.ownerUserId === currentUser.id).map((f) => f.id)
+    const allowedRoomIds = new Set(currentUser.roomPermissions || []);
+    const allowedDeviceNames = new Set(
+      allDevices.filter((d) => allowedRoomIds.has(d.roomId)).map((d) => d.name)
     );
-    const ownedRoomIds = new Set(
-      allRooms
-        .filter((r) => r.ownerUserId === currentUser.id || ownedFloorIds.has(r.floorId))
-        .map((r) => r.id)
-    );
-    const ownedDeviceNames = new Set(
-      allDevices
-        .filter((d) => ownedRoomIds.has(d.roomId))
-        .map((d) => d.name)
-    );
+    const usernameMarker = `"${String(currentUser.name || '').toLowerCase()}"`;
 
     return allAuditLogs.filter((log) => {
-      if (log.userId === currentUser.id) return true;
-
-      if (log.floorName) {
-        const floor = allFloors.find((f) => f.name === log.floorName);
-        if (floor?.ownerUserId === currentUser.id) return true;
+      if (log.userId === currentUser.id) {
+        return true;
       }
-
-      if (log.roomName) {
-        const room = allRooms.find((r) => r.name === log.roomName);
-        if (room && (room.ownerUserId === currentUser.id || ownedFloorIds.has(room.floorId))) return true;
+      if (log.action === 'room_permissions_updated' || log.action === 'room_permission_assigned') {
+        const details = String(log.details || '').toLowerCase();
+        if (usernameMarker !== '""' && details.includes(usernameMarker)) {
+          return true;
+        }
       }
-
-      if (log.deviceName && ownedDeviceNames.has(log.deviceName)) return true;
-
+      if (!log.userId && log.deviceName && allowedDeviceNames.has(log.deviceName)) {
+        return true;
+      }
       return false;
     });
-  }, [currentUser, allAuditLogs, allFloors, allRooms, allDevices]);
+  }, [currentUser, allAuditLogs, allDevices]);
 
   const devices = useMemo(() => {
     if (!currentUser) return [];
@@ -455,12 +495,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const device = allDevices.find((d) => d.id === deviceId);
     const threshold = device?.threshold;
     const payload = {
-      threshold: {
-        threshold_id: threshold?.id ? Number(threshold.id) : undefined,
+      threshold_data: {
         min_value: min,
         max_value: max,
-        trigger_action: threshold?.action || 'none',
-        target_device: threshold?.targetDeviceId ? Number(threshold.targetDeviceId) : null,
       },
     };
     devicesApi.update(Number(deviceId), payload).catch(console.error);
@@ -485,12 +522,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const clearAlert = async (alertId: string) => {
-    try {
-      await alertsApi.markRead(Number(alertId));
-      setAlerts(prev => prev.map(a => a.id === alertId ? { ...a, cleared: true, clearedAt: new Date() } : a));
-    } catch (e) {
-      setAlerts(prev => prev.map(a => a.id === alertId ? { ...a, cleared: true, clearedAt: new Date() } : a));
-    }
+    setAlerts(prev => prev.map(a => a.id === alertId ? { ...a, cleared: true, clearedAt: new Date() } : a));
   };
 
   const deleteAlert = async (alertId: string) => {
@@ -502,14 +534,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const addSchedule = async (schedule: Omit<Schedule, 'id' | 'createdAt'>) => {
     try {
+      const roomId = schedule.scope.type === 'room'
+        ? schedule.scope.id
+        : allDevices.find((d) => d.id === schedule.scope.id)?.roomId;
+      if (!roomId) {
+        return;
+      }
       const data = {
-        name: schedule.name,
-        scope_type: schedule.scope.type,
-        device: schedule.scope.type === 'device' ? Number(schedule.scope.id) : null,
-        room: schedule.scope.type === 'room' ? Number(schedule.scope.id) : null,
+        room: Number(roomId),
         action: schedule.action,
         schedule_time: schedule.time,
-        days_of_week: schedule.daysOfWeek,
         repeat_type: schedule.daysOfWeek.length === 0 ? 'once'
           : schedule.daysOfWeek.length === 2 ? 'weekend'
           : schedule.daysOfWeek.length === 5 ? 'weekday' : 'daily',
@@ -525,20 +559,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const updateSchedule = async (scheduleId: string, updates: Partial<Schedule>) => {
     try {
       const data: any = {};
-      if (updates.name) data.name = updates.name;
       if (updates.enabled !== undefined) data.status = updates.enabled;
       if (updates.action) data.action = updates.action;
       if (updates.time) data.schedule_time = updates.time;
       if (updates.daysOfWeek) {
-        data.days_of_week = updates.daysOfWeek;
         data.repeat_type = updates.daysOfWeek.length === 0 ? 'once'
           : updates.daysOfWeek.length === 2 ? 'weekend'
           : updates.daysOfWeek.length === 5 ? 'weekday' : 'daily';
       }
       if (updates.scope) {
-        data.scope_type = updates.scope.type;
-        data.device = updates.scope.type === 'device' ? Number(updates.scope.id) : null;
-        data.room = updates.scope.type === 'room' ? Number(updates.scope.id) : null;
+        const roomId = updates.scope.type === 'room'
+          ? updates.scope.id
+          : allDevices.find((d) => d.id === updates.scope?.id)?.roomId;
+        if (roomId) data.room = Number(roomId);
       }
       await schedulesApi.update(Number(scheduleId), data);
     } catch {}
@@ -636,20 +669,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const addDevice = async (device: Omit<Device, 'id' | 'lastUpdated'>) => {
     if (!isAdmin && !canAccessRoom(device.roomId)) return;
     try {
+      const typeName = device.subType || device.type;
+      const matchedType = deviceTypes.find((t) => String(t.name_type).toLowerCase() === String(typeName).toLowerCase())
+        || deviceTypes.find((t) => String(t.name_type).toLowerCase() === String(device.type).toLowerCase());
       const res: any = await devicesApi.create({
         device_name: device.name,
-        device_type: device.type,
-        device_subtype: device.subType,
+        type: matchedType?.type_id,
         room: Number(device.roomId),
         status: device.isOn ?? false,
-        description: device.description || '',
-        unit: device.unit || null,
-        threshold: device.threshold
+        threshold_data: device.threshold
           ? {
               min_value: device.threshold.min,
               max_value: device.threshold.max,
-              trigger_action: device.threshold.action || 'none',
-              target_device: device.threshold.targetDeviceId ? Number(device.threshold.targetDeviceId) : null,
             }
           : undefined,
       });
@@ -663,19 +694,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!isAdmin && device && !canAccessRoom(device.roomId)) return;
     try {
       const data: any = {};
+      const nextTypeName = updates.subType || updates.type || device?.subType || device?.type;
+      const matchedType = deviceTypes.find((t) => String(t.name_type).toLowerCase() === String(nextTypeName).toLowerCase());
       if (updates.name) data.device_name = updates.name;
-      if (updates.type) data.device_type = updates.type;
-      if (updates.subType) data.device_subtype = updates.subType;
+      if (matchedType) data.type = matchedType.type_id;
       if (updates.isOn !== undefined) data.status = updates.isOn;
-      if (updates.unit !== undefined) data.unit = updates.unit;
-      if (updates.description !== undefined) data.description = updates.description;
       if (updates.threshold) {
-        data.threshold = {
-          threshold_id: updates.threshold.id ? Number(updates.threshold.id) : undefined,
+        data.threshold_data = {
           min_value: updates.threshold.min,
           max_value: updates.threshold.max,
-          trigger_action: updates.threshold.action || 'none',
-          target_device: updates.threshold.targetDeviceId ? Number(updates.threshold.targetDeviceId) : null,
         };
       }
       await devicesApi.update(Number(deviceId), data);
