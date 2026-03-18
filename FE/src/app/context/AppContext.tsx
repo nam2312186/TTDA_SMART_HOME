@@ -336,14 +336,38 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       refreshTimer = window.setTimeout(() => {
         refreshTimer = null;
         fetchAll();
-      }, 400);
+      }, 100); // Giảm từ 400ms xuống 100ms để giảm lag
+    };
+
+    // Cập nhật nhanh device từ sensor_update event (không cần API call)
+    const updateDeviceFromEvent = (eventData: any) => {
+      if (!eventData?.device_id) return;
+      
+      setAllDevices(prev => prev.map(device => {
+        if (device.id === String(eventData.device_id)) {
+          return {
+            ...device,
+            currentValue: Number(eventData.value),
+            unit: eventData.unit || device.unit,
+            lastUpdated: new Date(),
+          };
+        }
+        return device;
+      }));
     };
 
     const connect = () => {
       ws = connectSensorWebSocket(
         (message: any) => {
           const eventType = message?.event;
-          if (eventType === 'sensor_data' || eventType === 'alert' || eventType === 'device_status') {
+          
+          // Sensor data: cập nhật realtime, ko cần refetch full
+          if (eventType === 'sensor_data' && message?.data) {
+            updateDeviceFromEvent(message.data);
+            // Vẫn schedule refetch nhẹ để sync alerts/other data
+            scheduleRefresh();
+          } else if (eventType === 'alert' || eventType === 'device_status') {
+            // Alert/device_status: cần refetch full
             scheduleRefresh();
           }
         },
