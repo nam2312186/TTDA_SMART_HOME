@@ -360,12 +360,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       ws = connectSensorWebSocket(
         (message: any) => {
           const eventType = message?.event;
+          const payload = message?.data ?? message;
           
-          // Sensor data: cập nhật realtime, ko cần refetch full
-          if (eventType === 'sensor_data' && message?.data) {
-            updateDeviceFromEvent(message.data);
-            // Vẫn schedule refetch nhẹ để sync alerts/other data
-            scheduleRefresh();
+          // Sensor data: cập nhật realtime tức thì từ payload websocket
+          if (eventType === 'sensor_data') {
+            updateDeviceFromEvent(payload);
           } else if (eventType === 'alert' || eventType === 'device_status') {
             // Alert/device_status: cần refetch full
             scheduleRefresh();
