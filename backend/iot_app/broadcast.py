@@ -7,8 +7,8 @@ Ví dụ:
     broadcast_sensor_update(sensor_id=1, value=25.5, unit='°C')
 """
 
-import asyncio
 import logging
+from asgiref.sync import async_to_sync
 
 logger = logging.getLogger('iot_app.broadcast')
 
@@ -27,11 +27,7 @@ def _send(group: str, message: dict):
     if channel_layer is None:
         return
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        loop.run_until_complete(channel_layer.group_send(group, message))
+        async_to_sync(channel_layer.group_send)(group, message)
     except Exception as e:
         logger.warning(f'Broadcast thất bại: {e}')
 

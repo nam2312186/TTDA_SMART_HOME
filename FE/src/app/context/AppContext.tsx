@@ -265,6 +265,34 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [users, setUsers] = useState<User[]>([]);
   const [allAuditLogs, setAllAuditLogs] = useState<AuditLog[]>([]);
 
+  const syncLatestSensorValues = useCallback(async () => {
+    const latestSensorData = await sensorDataApi.latest().catch(() => []);
+    if (!Array.isArray(latestSensorData) || latestSensorData.length === 0) return;
+
+    const latestByDeviceId = new Map<string, { value: number; unit?: string }>();
+    (latestSensorData as any[]).forEach((entry) => {
+      const deviceId = String(entry.device);
+      const value = Number(entry.value);
+      if (!Number.isFinite(value)) return;
+      if (!latestByDeviceId.has(deviceId)) {
+        latestByDeviceId.set(deviceId, { value, unit: entry.unit || undefined });
+      }
+    });
+
+    if (latestByDeviceId.size === 0) return;
+
+    setAllDevices((prev) => prev.map((device) => {
+      const latest = latestByDeviceId.get(device.id);
+      if (!latest) return device;
+      return {
+        ...device,
+        currentValue: latest.value,
+        unit: latest.unit || device.unit,
+        lastUpdated: new Date(),
+      };
+    }));
+  }, []);
+
   // ─── Fetch all data from API ─────────────────────────────────────────────────
   const fetchAll = useCallback(async () => {
     try {
@@ -323,6 +351,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     fetchAll();
   }, [fetchAll, currentUser?.id]);
+
+  // Fallback anti-delay: nếu websocket miss event thì vẫn sync latest data mỗi 5s.
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      syncLatestSensorValues();
+    }, 5000);
+
+    return () => window.clearInterval(intervalId);
+  }, [syncLatestSensorValues]);
 
   // Global realtime bridge: khi IoT push vào BE, FE sẽ refresh data ngay
   // để mọi màn hình đều thấy thay đổi, không chỉ riêng dashboard admin.
