@@ -11,13 +11,31 @@ from .models import Alert, SensorData, Threshold
 from .serializers import AlertSerializer, SensorDataSerializer, ThresholdSerializer
 
 
+MAX_ALERT_RETENTION = 50
+
+
+def _prune_old_alerts(max_keep=MAX_ALERT_RETENTION):
+    old_ids = list(
+        Alert.objects.order_by('-created_at').values_list('alert_id', flat=True)[max_keep:]
+    )
+    if old_ids:
+        Alert.objects.filter(alert_id__in=old_ids).delete()
+
+
 def _check_threshold(entry, source='system'):
-    """Kiểm tra ngưỡng của device sau khi nhận sensor data."""
+    """Tạo alert cho mọi thiết bị đã cấu hình ngưỡng."""
     device = entry.device
-    if not device or not device.threshold_id:
+    if not device:
         return None
 
     threshold = device.threshold
+    if threshold is None:
+        return None
+
+    # Nếu user xoá cả min/max thì xem như tắt cảnh báo cho thiết bị này.
+    if threshold.min_value is None and threshold.max_value is None:
+        return None
+
     value = entry.value
     threshold_value = None
     direction_label = None
@@ -47,6 +65,7 @@ def _check_threshold(entry, source='system'):
         details=message,
     )
     broadcast_alert(alert.alert_id, device.device_id, message, device.device_id)
+    _prune_old_alerts()
     return alert
 
 

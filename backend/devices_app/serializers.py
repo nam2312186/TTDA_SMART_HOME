@@ -70,11 +70,15 @@ class DeviceSerializer(serializers.ModelSerializer):
         min_value = payload.get('min_value')
         max_value = payload.get('max_value')
         if min_value in (None, '') and max_value in (None, ''):
+            old_threshold_id = device.threshold_id
+            if old_threshold_id:
+                device.threshold = None
+                device.save(update_fields=['threshold'])
+                # Dọn threshold mồ côi nếu không còn device nào dùng.
+                if not Device.objects.filter(threshold_id=old_threshold_id).exists():
+                    Threshold.objects.filter(threshold_id=old_threshold_id).delete()
             return
-        threshold, _ = Threshold.objects.get_or_create(
-            threshold_id=device.threshold_id or 0,
-            defaults={'min_value': min_value, 'max_value': max_value},
-        )
+
         if not device.threshold_id:
             threshold = Threshold.objects.create(min_value=min_value, max_value=max_value)
             device.threshold = threshold

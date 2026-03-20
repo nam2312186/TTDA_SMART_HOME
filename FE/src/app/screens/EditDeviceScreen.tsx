@@ -26,10 +26,16 @@ export const EditDeviceScreen: React.FC<EditDeviceScreenProps> = ({
   roomName,
   onBack,
 }) => {
-  const { updateDevice } = useApp();
+  const { updateDevice, updateDeviceThreshold } = useApp();
   const [deviceName, setDeviceName] = useState(device.name);
   const [deviceSubType, setDeviceSubType] = useState(device.subType);
   const [description, setDescription] = useState(device.description || '');
+  const [minThreshold, setMinThreshold] = useState(
+    typeof device.threshold?.min === 'number' ? String(device.threshold.min) : ''
+  );
+  const [maxThreshold, setMaxThreshold] = useState(
+    typeof device.threshold?.max === 'number' ? String(device.threshold.max) : ''
+  );
   const [error, setError] = useState('');
 
   const actuatorTypes = [
@@ -46,6 +52,7 @@ export const EditDeviceScreen: React.FC<EditDeviceScreenProps> = ({
   ];
 
   const subTypeOptions = device.type === 'sensor' ? sensorTypes : actuatorTypes;
+  const isLightSensor = device.type === 'sensor' && deviceSubType === 'light';
 
   const handleSave = () => {
     setError('');
@@ -60,11 +67,33 @@ export const EditDeviceScreen: React.FC<EditDeviceScreenProps> = ({
       return;
     }
 
+    const minValue = minThreshold.trim() === '' ? undefined : Number(minThreshold);
+    const maxValue = maxThreshold.trim() === '' ? undefined : Number(maxThreshold);
+
+    if (isLightSensor) {
+      if (minThreshold.trim() !== '' && !Number.isFinite(minValue)) {
+        setError('Min threshold must be a valid number');
+        return;
+      }
+      if (maxThreshold.trim() !== '' && !Number.isFinite(maxValue)) {
+        setError('Max threshold must be a valid number');
+        return;
+      }
+      if (minValue !== undefined && maxValue !== undefined && minValue > maxValue) {
+        setError('Min threshold cannot be greater than max threshold');
+        return;
+      }
+    }
+
     updateDevice(device.id, {
       name: deviceName.trim(),
       subType: deviceSubType as any,
       description: description.trim() || undefined,
     });
+
+    if (isLightSensor) {
+      updateDeviceThreshold(device.id, minValue, maxValue);
+    }
 
     onBack();
   };
@@ -140,6 +169,32 @@ export const EditDeviceScreen: React.FC<EditDeviceScreenProps> = ({
                 rows={3}
               />
             </div>
+
+            {isLightSensor && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="minThreshold">Alert Min Threshold (Optional)</Label>
+                  <Input
+                    id="minThreshold"
+                    type="number"
+                    value={minThreshold}
+                    onChange={(e) => setMinThreshold(e.target.value)}
+                    placeholder="e.g., 20"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="maxThreshold">Alert Max Threshold (Optional)</Label>
+                  <Input
+                    id="maxThreshold"
+                    type="number"
+                    value={maxThreshold}
+                    onChange={(e) => setMaxThreshold(e.target.value)}
+                    placeholder="e.g., 35"
+                  />
+                </div>
+              </>
+            )}
 
             {error && (
               <div className="text-sm text-red-600 bg-red-50 p-3 rounded-lg">
