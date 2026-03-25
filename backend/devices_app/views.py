@@ -142,8 +142,10 @@ class DeviceBrightnessView(APIView):
         except (ValueError, TypeError):
             return Response({'error': 'Invalid brightness value'}, status=status.HTTP_400_BAD_REQUEST)
         
+        is_on = brightness > 0
         device.brightness = brightness
-        device.save(update_fields=['brightness'])
+        device.status = is_on
+        device.save(update_fields=['brightness', 'status'])
         
         create_activity_log(
             request=request,
@@ -164,9 +166,12 @@ class DeviceBrightnessView(APIView):
             # Log error but still return success since DB was updated
             import logging
             logging.getLogger('devices_app').error(f'MQTT publish error: {e}')
+
+        broadcast_device_status(device.device_id, is_on, device.device_name)
         
         return Response({
             'message': f'{device.device_name} brightness set to {brightness}/255',
-            'brightness': brightness
+            'brightness': brightness,
+            'status': is_on,
         })
 

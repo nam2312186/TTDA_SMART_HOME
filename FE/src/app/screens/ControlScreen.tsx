@@ -15,7 +15,9 @@ export const ControlScreen: React.FC<ControlScreenProps> = ({ onNavigate }) => {
   const [filterType, setFilterType] = useState<'all' | 'light' | 'fan' | 'door'>('all');
   const [expandedDeviceId, setExpandedDeviceId] = useState<string | null>(null);
 
+  const totalDevices = devices.length;
   const actuators = devices.filter((d) => d.type === 'actuator');
+  const sensorsCount = totalDevices - actuators.length;
   
   const filteredDevices =
     filterType === 'all'
@@ -37,6 +39,19 @@ export const ControlScreen: React.FC<ControlScreenProps> = ({ onNavigate }) => {
       </div>
 
       <div className="p-4 space-y-4">
+        <Card>
+          <CardContent className="p-3">
+            <p className="text-sm text-gray-700">
+              Showing controllable devices: <span className="font-semibold">{actuators.length}</span> / {totalDevices}
+            </p>
+            {sensorsCount > 0 && (
+              <p className="text-xs text-gray-500 mt-1">
+                {sensorsCount} sensor device(s) are monitored in Home/Reports and do not have On/Off controls.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Quick Stats */}
         <div className="grid grid-cols-3 gap-3">
           <Card className="text-center">
@@ -164,16 +179,18 @@ export const ControlScreen: React.FC<ControlScreenProps> = ({ onNavigate }) => {
                         </div>
                       </div>
                       <div className="flex items-center gap-1">
-                        <Button
-                          size="sm"
-                          variant={device.isOn ? 'default' : 'outline'}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleDevice(device.id);
-                          }}
-                        >
-                          {device.isOn ? 'Turn Off' : 'Turn On'}
-                        </Button>
+                        {!isLight && (
+                          <Button
+                            size="sm"
+                            variant={device.isOn ? 'default' : 'outline'}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleDevice(device.id);
+                            }}
+                          >
+                            {device.isOn ? 'Turn Off' : 'Turn On'}
+                          </Button>
+                        )}
                         {isLight && (
                           <Button
                             variant="ghost"

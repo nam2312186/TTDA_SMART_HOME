@@ -65,6 +65,7 @@ def _handle_sensor_data(device_id: int, payload: dict):
 def _handle_device_status(device_id: int, payload: dict):
     """Cập nhật trạng thái thiết bị từ MQTT."""
     from devices_app.models import Device
+    from iot_app.broadcast import broadcast_device_status
     from logs_app.utils import create_activity_log
     try:
         device = Device.objects.get(pk=device_id)
@@ -75,6 +76,7 @@ def _handle_device_status(device_id: int, payload: dict):
             action='mqtt_device_status_updated',
             details=f'Device "{device.device_name}" status -> {device.status}',
         )
+        broadcast_device_status(device.device_id, device.status, device.device_name)
         logger.info(f'MQTT: Device {device_id} status → {device.status}')
     except Device.DoesNotExist:
         logger.warning(f'MQTT: device_id={device_id} không tồn tại')
@@ -114,6 +116,31 @@ def publish_device_control(client, device_id: int, brightness: int):
         logger.warning(f'MQTT: device_id={device_id} không tồn tại')
     except Exception as e:
         logger.error(f'MQTT: Error publishing control: {e}')
+
+
+def publish_initial_light_states(client):
+    """
+    Reset all light actuators to 0 on backend startup and publish initial state.
+    This keeps FE/BE/device state consistent after server restarts.
+    """
+    from devices_app.models import Device
+
+    lights = Device.objects.select_related('type').filter(
+        type__name_type='light',
+        threshold__isnull=True,
+    )
+
+    for light in lights:
+        try:
+            light.brightness = 0
+            light.status = False
+            light.save(update_fields=['brightness', 'status'])
+            payload = json.dumps({'value': 0})
+            topic = f'smarthome/device/{light.device_id}/control'
+            client.publish(topic, payload, qos=1)
+            logger.info(f'MQTT init: reset {light.device_id} -> 0')
+        except Exception as e:
+            logger.warning(f'MQTT init: cannot reset device {light.device_id}: {e}')
 
 
 def on_connect(client, userdata, flags, reason_code, properties=None):

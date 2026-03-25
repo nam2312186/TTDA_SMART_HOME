@@ -270,6 +270,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [users, setUsers] = useState<User[]>([]);
   const [allAuditLogs, setAllAuditLogs] = useState<AuditLog[]>([]);
   const brightnessSyncTimersRef = useRef<Record<string, number>>({});
+  const devicesSnapshotRef = useRef<Device[]>([]);
+  const roomsSnapshotRef = useRef<Room[]>([]);
 
   const syncLatestSensorValues = useCallback(async () => {
     const latestSensorData = await sensorDataApi.latest().catch(() => []);
@@ -359,6 +361,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [fetchAll, currentUser?.id]);
 
   useEffect(() => {
+    devicesSnapshotRef.current = allDevices;
+  }, [allDevices]);
+
+  useEffect(() => {
+    roomsSnapshotRef.current = allRooms;
+  }, [allRooms]);
+
+  useEffect(() => {
     return () => {
       Object.values(brightnessSyncTimersRef.current).forEach((timerId) => {
         window.clearTimeout(timerId);
@@ -376,22 +386,25 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => window.clearInterval(intervalId);
   }, [syncLatestSensorValues]);
 
-  // Global realtime bridge: khi IoT push vào BE, FE sẽ refresh data ngay
-  // để mọi màn hình đều thấy thay đổi, không chỉ riêng dashboard admin.
+  // Global realtime bridge: cập nhật trực tiếp từ websocket để giảm độ trễ UI.
   useEffect(() => {
     let ws: WebSocket | null = null;
     let reconnectTimer: number | null = null;
-    let refreshTimer: number | null = null;
+    let alertsRefreshTimer: number | null = null;
 
-    const scheduleRefresh = () => {
-      if (refreshTimer) return;
-      refreshTimer = window.setTimeout(() => {
-        refreshTimer = null;
-        fetchAll();
-      }, 100); // Giảm từ 400ms xuống 100ms để giảm lag
+    const scheduleAlertsRefresh = () => {
+      if (alertsRefreshTimer) return;
+      alertsRefreshTimer = window.setTimeout(async () => {
+        alertsRefreshTimer = null;
+        try {
+          const alertsList = await alertsApi.list();
+          setAlerts((alertsList as any[]).map(mapAlert));
+        } catch (e) {
+          console.error('alerts refresh error', e);
+        }
+      }, 120);
     };
 
-    // Cập nhật nhanh device từ sensor_update event (không cần API call)
     const updateDeviceFromEvent = (eventData: any) => {
       if (!eventData?.device_id) return;
       
@@ -408,18 +421,56 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }));
     };
 
+    const updateDeviceStatusFromEvent = (eventData: any) => {
+      if (!eventData?.device_id) return;
+      setAllDevices((prev) =>
+        prev.map((device) =>
+          device.id === String(eventData.device_id)
+            ? { ...device, isOn: Boolean(eventData.status), lastUpdated: new Date() }
+            : device
+        )
+      );
+    };
+
+    const addAlertFromEvent = (eventData: any) => {
+      const deviceId = String(eventData?.device_id || '');
+      const matchedDevice = devicesSnapshotRef.current.find((d) => d.id === deviceId);
+      const matchedRoom = matchedDevice
+        ? roomsSnapshotRef.current.find((r) => r.id === matchedDevice.roomId)
+        : undefined;
+
+      const liveAlert: Alert = {
+        id: String(eventData?.alert_id || Date.now()),
+        deviceId,
+        deviceName: matchedDevice?.name || 'Unknown Device',
+        roomName: matchedRoom?.name || 'Unknown Room',
+        type: 'threshold_exceeded',
+        severity: 'medium',
+        message: String(eventData?.message || 'Threshold exceeded'),
+        timestamp: new Date(),
+        cleared: false,
+        homeId: 'home1',
+      };
+
+      setAlerts((prev) => {
+        if (prev.some((a) => a.id === liveAlert.id)) return prev;
+        return [liveAlert, ...prev];
+      });
+    };
+
     const connect = () => {
       ws = connectSensorWebSocket(
         (message: any) => {
           const eventType = message?.event;
-          const payload = message?.data ?? message;
-          
-          // Sensor data: cập nhật realtime tức thì từ payload websocket
+          const payload = message;
+
           if (eventType === 'sensor_data') {
             updateDeviceFromEvent(payload);
-          } else if (eventType === 'alert' || eventType === 'device_status') {
-            // Alert/device_status: cần refetch full
-            scheduleRefresh();
+          } else if (eventType === 'device_status') {
+            updateDeviceStatusFromEvent(payload);
+          } else if (eventType === 'alert') {
+            addAlertFromEvent(payload);
+            scheduleAlertsRefresh();
           }
         },
         () => {
@@ -435,11 +486,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     connect();
 
     return () => {
-      if (refreshTimer) window.clearTimeout(refreshTimer);
+      if (alertsRefreshTimer) window.clearTimeout(alertsRefreshTimer);
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
       ws?.close();
     };
-  }, [fetchAll]);
+  }, []);
 
   useEffect(() => {
     const handleFocus = () => {
@@ -591,11 +642,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const setBrightness = async (deviceId: string, brightness: number) => {
     const clampedBrightness = Math.max(0, Math.min(255, Math.round(brightness)));
+    const isOn = clampedBrightness > 0;
 
     // Optimistic UI update for smooth slider dragging.
     setAllDevices((prev) =>
       prev.map((d) =>
-        d.id === deviceId ? { ...d, brightness: clampedBrightness, lastUpdated: new Date() } : d
+        d.id === deviceId
+          ? { ...d, brightness: clampedBrightness, isOn, lastUpdated: new Date() }
+          : d
       )
     );
 
