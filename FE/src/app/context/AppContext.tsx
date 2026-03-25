@@ -63,6 +63,7 @@ function mapDevice(d: any): Device {
     subType: mappedSubType as any,
     roomId: String(d.room),
     isOn: Boolean(d.status),
+    brightness: typeof d.brightness === 'number' ? d.brightness : 0,
     lastUpdated: new Date(d.created_at || Date.now()),
     description: d.description,
     currentValue: typeof d.current_value === 'number' ? d.current_value : undefined,
@@ -207,6 +208,7 @@ interface AppContextType {
   // Actions
   toggleDevice: (deviceId: string) => void;
   toggleDevices: (deviceIds: string[]) => void;
+  setBrightness: (deviceId: string, brightness: number) => void;
   updateDeviceThreshold: (deviceId: string, min?: number, max?: number) => void;
   clearAlert: (alertId: string) => void;
   deleteAlert: (alertId: string) => void;
@@ -574,6 +576,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     ));
   };
 
+  const setBrightness = async (deviceId: string, brightness: number) => {
+    try {
+      const clampedBrightness = Math.max(0, Math.min(255, Math.round(brightness)));
+      await devicesApi.setBrightness(Number(deviceId), clampedBrightness);
+      setAllDevices(prev => prev.map(d =>
+        d.id === deviceId ? { ...d, brightness: clampedBrightness, lastUpdated: new Date() } : d
+      ));
+    } catch (e) {
+      console.error('setBrightness error', e);
+    }
+  };
+
   const updateDeviceThreshold = (deviceId: string, min?: number, max?: number) => {
     const device = allDevices.find((d) => d.id === deviceId);
     const threshold = device?.threshold;
@@ -833,6 +847,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       canAccessDevice,
       toggleDevice,
       toggleDevices,
+      setBrightness,
       updateDeviceThreshold,
       clearAlert,
       deleteAlert,

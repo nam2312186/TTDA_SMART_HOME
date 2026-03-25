@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Lightbulb, Fan, DoorOpen, CheckSquare, Square } from 'lucide-react';
+import { Lightbulb, Fan, DoorOpen, CheckSquare, Square, ChevronDown } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Checkbox } from '../components/ui/checkbox';
 import { Badge } from '../components/ui/badge';
+import { Slider } from '../components/ui/slider';
 import { useApp } from '../context/AppContext';
 
 interface ControlScreenProps {
@@ -11,9 +12,10 @@ interface ControlScreenProps {
 }
 
 export const ControlScreen: React.FC<ControlScreenProps> = ({ onNavigate }) => {
-  const { devices, rooms, toggleDevices } = useApp();
+  const { devices, rooms, toggleDevices, setBrightness } = useApp();
   const [selectedDevices, setSelectedDevices] = useState<string[]>([]);
   const [filterType, setFilterType] = useState<'all' | 'light' | 'fan' | 'door'>('all');
+  const [expandedDeviceId, setExpandedDeviceId] = useState<string | null>(null);
 
   const actuators = devices.filter((d) => d.type === 'actuator');
   
@@ -169,6 +171,8 @@ export const ControlScreen: React.FC<ControlScreenProps> = ({ onNavigate }) => {
             filteredDevices.map((device) => {
               const room = rooms.find((r) => r.id === device.roomId);
               const isSelected = selectedDevices.includes(device.id);
+              const isExpanded = expandedDeviceId === device.id;
+              const isLight = device.subType === 'light';
               const Icon =
                 device.subType === 'light'
                   ? Lightbulb
@@ -216,9 +220,92 @@ export const ControlScreen: React.FC<ControlScreenProps> = ({ onNavigate }) => {
                           >
                             {device.isOn ? 'On' : 'Off'}
                           </Badge>
+                          {isLight && device.isOn && (
+                            <span className="text-xs text-yellow-600">
+                              {device.brightness || 0}%
+                            </span>
+                          )}
                         </div>
                       </div>
+                      {isLight && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setExpandedDeviceId(isExpanded ? null : device.id);
+                          }}
+                        >
+                          <ChevronDown
+                            className={`w-4 h-4 transition-transform ${
+                              isExpanded ? 'rotate-180' : ''
+                            }`}
+                          />
+                        </Button>
+                      )}
                     </div>
+
+                    {/* Brightness Slider for Light Devices */}
+                    {isLight && isExpanded && (
+                      <div className="mt-4 pt-4 border-t border-gray-200 space-y-3">
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-center">
+                            <label className="text-sm font-medium text-gray-700">
+                              Brightness
+                            </label>
+                            <span className="text-sm font-semibold text-gray-900">
+                              {device.brightness || 0}%
+                            </span>
+                          </div>
+                          <Slider
+                            value={[device.brightness || 0]}
+                            onValueChange={(value) => {
+                              const brightness = Math.round((value[0] / 100) * 255);
+                              setBrightness(device.id, brightness);
+                            }}
+                            min={0}
+                            max={100}
+                            step={1}
+                            className="w-full"
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="flex-1"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setBrightness(device.id, 0);
+                            }}
+                          >
+                            Off
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="flex-1"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setBrightness(device.id, 127);
+                            }}
+                          >
+                            50%
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="flex-1"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setBrightness(device.id, 255);
+                            }}
+                          >
+                            Max
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               );

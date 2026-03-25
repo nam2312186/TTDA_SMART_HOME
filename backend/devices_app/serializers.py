@@ -26,6 +26,7 @@ class DeviceSerializer(serializers.ModelSerializer):
             'room_name',
             'floor_name',
             'status',
+            'brightness',
             'threshold',
             'threshold_data',
             'created_at',

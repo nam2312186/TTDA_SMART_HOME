@@ -244,12 +244,89 @@ docker run -d --name emqx -p 1883:1883 -p 18083:18083 emqx/emqx
 |-------|-------|---------|
 | `smarthome/device/{device_id}/sensor/{metric}` | Device → Server | `{"value": 25.5, "unit": "C"}` |
 | `smarthome/device/{device_id}/status` | Device → Server | `{"status": true}` (bật) / `{"status": false}` (tắt) |
+| `smarthome/device/{device_id}/control` | Server → Device | `{"value": 128}` (độ sáng 0-255) |
 
-**Ví dụ publish từ thiết bị:**
+**Ví dụ publish từ thiết bị (Sensor):**
 ```
 Topic:   smarthome/device/3/sensor/temperature
 Payload: {"value": 28.1, "unit": "C"}
 ```
+
+### 4.2.1 Điều khiển độ sáng LED qua MQTT
+
+Django sẽ **publish** (gửi) câu lệnh điều khiển độ sáng đèn LED tới thiết bị qua topic `smarthome/device/{device_id}/control`.
+
+**Luồng điều khiển LED:**
+```
+FE (App) → Kéo slider độ sáng → API call → Django lưu DB + publish MQTT
+                                              ↓
+ESP32/Arduino: Subscribe topic control → Nhận brightness value → Điều chỉnh PWM LED
+```
+
+**Cách thiết bị ESP32 nhận và xử lý:**
+
+```cpp
+#include <WiFi.h>
+#include <PubSubClient.h>
+
+const char* BROKER = "192.168.1.100";  // MQTT broker address
+const int PORT = 1883;
+const char* CLIENT_ID = "esp32_light_1";
+const int DEVICE_ID = 1;  // Must match Django device ID
+const int LED_PIN = 13;   // GPIO pin cho LED PWM
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+void setup_mqtt() {
+  client.setServer(BROKER, PORT);
+  client.setCallback(onMqttMessage);
+}
+
+void onMqttMessage(char* topic, byte* payload, unsigned int length) {
+  // Parse topic: smarthome/device/1/control
+  if (strncmp(topic, "smarthome/device/", 17) == 0) {
+    
+    // Parse JSON payload: {"value": 128}
+    StaticJsonDocument<128> doc;
+    String payloadStr((char*)payload, length);
+    deserializeJson(doc, payloadStr);
+    
+    int brightness = doc["value"] | 0;  // 0-255
+    brightness = constrain(brightness, 0, 255);
+    
+    // Điều chỉnh PWM LED
+    analogWrite(LED_PIN, brightness);
+    Serial.printf("LED brightness set to: %d\n", brightness);
+  }
+}
+
+void loop() {
+  if (!client.connected()) {
+    // Re-connect to broker
+    if (client.connect(CLIENT_ID)) {
+      // Subscribe to control topic
+      char control_topic[64];
+      snprintf(control_topic, sizeof(control_topic), 
+               "smarthome/device/%d/control", DEVICE_ID);
+      client.subscribe(control_topic);
+      Serial.printf("Subscribed to: %s\n", control_topic);
+    }
+  }
+  client.loop();
+  delay(100);
+}
+```
+
+**Payload format:**
+```json
+{
+  "value": 255
+}
+```
+
+- `value`: Giá trị độ sáng từ 0 (OFF) đến 255 (MAX)
+- Thiết bị nên convert sang phần trăm (%) nếu cần: `percentage = (value * 100) / 255`
 
 ### 4.3 Chạy MQTT listener trên Django
 
@@ -519,6 +596,7 @@ POST /api/alerts/{id}/read/    ← đánh dấu đã đọc
 | `POST` | `/api/devices/{id}/on/` | Bật actuator (đèn RGB/quạt mini) |
 | `POST` | `/api/devices/{id}/off/` | Tắt actuator (đèn RGB/quạt mini) |
 | `POST` | `/api/devices/{id}/toggle/` | Đảo trạng thái actuator |
+| `POST` | `/api/devices/{id}/brightness/` | **Điều khiển độ sáng LED** (0-255) |
 | `GET`  | `/api/sensor-data/` | Xem toàn bộ dữ liệu cảm biến |
 | `GET`  | `/api/sensor-data/latest/` | Dữ liệu mới nhất |
 | `GET`  | `/api/sensor-data/{sensor_id}/` | Dữ liệu theo cảm biến |
@@ -528,6 +606,61 @@ POST /api/alerts/{id}/read/    ← đánh dấu đã đọc
 | `POST` | `/api/thresholds/` | Tạo ngưỡng |
 
 Xem full Swagger UI tại: **http://localhost:8000/api/docs/**
+
+### 8.1 Endpoint điều khiển độ sáng LED (Brightness Control)
+
+**Đường dẫn API:**
+```
+POST /api/devices/{device_id}/brightness/
+```
+
+**Request Body:**
+```json
+{
+  "brightness": 128
+}
+```
+
+- `brightness`: Giá trị từ **0 (OFF)** đến **255 (MAX)**
+- Hoặc tính bằng phần trăm: `brightness = (percentage * 255) / 100`
+
+**Response (thành công):**
+```json
+{
+  "message": "Ceiling Light brightness set to 128/255",
+  "brightness": 128
+}
+```
+
+**Ví dụ curl:**
+
+```bash
+# Đặt độ sáng 128 (50%)
+curl -X POST http://localhost:8000/api/devices/1/brightness/ \
+  -H "Content-Type: application/json" \
+  -d '{"brightness": 128}'
+
+# Đặt độ sáng 255 (MAX)
+curl -X POST http://localhost:8000/api/devices/1/brightness/ \
+  -H "Content-Type: application/json" \
+  -d '{"brightness": 255}'
+
+# Tắt đèn (0)
+curl -X POST http://localhost:8000/api/devices/1/brightness/ \
+  -H "Content-Type: application/json" \
+  -d '{"brightness": 0}'
+```
+
+**Luồng hoạt động:**
+1. Frontend gửi `POST /api/devices/1/brightness/` với `{"brightness": 128}`
+2. Backend lưu giá trị vào database
+3. Backend **publish MQTT** lên `smarthome/device/1/control` với payload `{"value": 128}`
+4. ESP32/Arduino nhận từ MQTT → apply PWM → đèn sáng đạt 50%
+
+**Ghi chú:**
+- Giá trị được tự động clamp vào range 0-255
+- MQTT publish thất bại sẽ không ảnh hưởng đến API response (DB vẫn được update)
+- Để theo dõi MQTT publish log, chạy: `python manage.py mqtt_listen`
 
 ---
 

@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from iot_app.broadcast import broadcast_device_status
+from iot_app.mqtt_client import create_mqtt_client, publish_device_control
 from logs_app.utils import create_activity_log
 
 from .models import Device, DeviceType
@@ -129,3 +130,43 @@ class DeviceToggleView(APIView):
         )
         broadcast_device_status(device.device_id, device.status, device.device_name)
         return Response({'message': f'{device.device_name} toggled', 'status': device.status})
+
+
+class DeviceBrightnessView(APIView):
+    def post(self, request, pk):
+        device = get_object_or_404(Device, pk=pk)
+        brightness = request.data.get('brightness', 0)
+        
+        try:
+            brightness = max(0, min(255, int(brightness)))
+        except (ValueError, TypeError):
+            return Response({'error': 'Invalid brightness value'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        device.brightness = brightness
+        device.save(update_fields=['brightness'])
+        
+        create_activity_log(
+            request=request,
+            device=device,
+            action='device_brightness_set',
+            details=f'Device "{device.device_name}" brightness set to {brightness}/255',
+        )
+        
+        # Publish to MQTT broker
+        try:
+            mqtt_client, broker, port = create_mqtt_client()
+            mqtt_client.connect(broker, port, keepalive=60)
+            mqtt_client.loop_start()
+            publish_device_control(mqtt_client, device.device_id, brightness)
+            mqtt_client.loop_stop()
+            mqtt_client.disconnect()
+        except Exception as e:
+            # Log error but still return success since DB was updated
+            import logging
+            logging.getLogger('devices_app').error(f'MQTT publish error: {e}')
+        
+        return Response({
+            'message': f'{device.device_name} brightness set to {brightness}/255',
+            'brightness': brightness
+        })
+

@@ -31,6 +31,7 @@ export interface Device {
   subType: SensorType | ActuatorType;
   roomId: string;
   isOn: boolean;
+  brightness?: number; // For light actuators: 0-255
   lastUpdated: Date;
   description?: string;
   // Sensor specific

@@ -32,6 +32,7 @@ class Device(models.Model):
         db_column='room_id',
     )
     status = models.BooleanField(default=False)
+    brightness = models.IntegerField(default=0)  # For light actuators: 0-255
     threshold = models.ForeignKey(
         'monitoring_app.Threshold',
         on_delete=models.SET_NULL,

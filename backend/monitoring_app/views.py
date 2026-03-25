@@ -11,7 +11,7 @@ from .models import Alert, SensorData, Threshold
 from .serializers import AlertSerializer, SensorDataSerializer, ThresholdSerializer
 
 
-MAX_ALERT_RETENTION = 50
+MAX_ALERT_RETENTION = 20
 
 
 def _prune_old_alerts(max_keep=MAX_ALERT_RETENTION):

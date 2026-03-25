@@ -93,6 +93,7 @@ export const devicesApi = {
   turnOn: (id: number) => request(`/devices/${id}/on/`, { method: 'POST' }),
   turnOff: (id: number) => request(`/devices/${id}/off/`, { method: 'POST' }),
   toggle: (id: number) => request(`/devices/${id}/toggle/`, { method: 'POST' }),
+  setBrightness: (id: number, brightness: number) => request(`/devices/${id}/brightness/`, { method: 'POST', body: JSON.stringify({ brightness }) }),
   byRoom: (roomId: number) => request<any[]>(`/rooms/${roomId}/devices/`),
 };
 

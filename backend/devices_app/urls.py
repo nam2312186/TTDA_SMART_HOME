@@ -1,7 +1,7 @@
 from django.urls import path
 from .views import (
     DeviceListView, DeviceDetailView, RoomDeviceListView,
-    DeviceTurnOnView, DeviceTurnOffView, DeviceToggleView,
+    DeviceTurnOnView, DeviceTurnOffView, DeviceToggleView, DeviceBrightnessView,
     DeviceTypeListView,
 )
 
@@ -18,4 +18,5 @@ urlpatterns = [
     path("devices/<int:pk>/on/", DeviceTurnOnView.as_view()),
     path("devices/<int:pk>/off/", DeviceTurnOffView.as_view()),
     path("devices/<int:pk>/toggle/", DeviceToggleView.as_view()),
+    path("devices/<int:pk>/brightness/", DeviceBrightnessView.as_view()),
 ]

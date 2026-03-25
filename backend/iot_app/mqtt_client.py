@@ -80,6 +80,42 @@ def _handle_device_status(device_id: int, payload: dict):
         logger.warning(f'MQTT: device_id={device_id} không tồn tại')
 
 
+def publish_device_control(client, device_id: int, brightness: int):
+    """
+    Công bố giá trị điều khiển đèn LED lên broker.
+    Topic: smarthome/device/{device_id}/control
+    Payload: brightness value (0-255)
+    """
+    from devices_app.models import Device
+    from logs_app.utils import create_activity_log
+    
+    try:
+        device = Device.objects.get(pk=device_id)
+        brightness = max(0, min(255, int(brightness)))  # Clamp to 0-255
+        
+        payload = json.dumps({'value': brightness})
+        topic = f'smarthome/device/{device_id}/control'
+        
+        # Publish to broker
+        client.publish(topic, payload, qos=1)
+        logger.info(f'MQTT: Published brightness={brightness} to {topic}')
+        
+        # Update device brightness in DB
+        device.brightness = brightness
+        device.save(update_fields=['brightness'])
+        
+        # Log activity
+        create_activity_log(
+            device=device,
+            action='mqtt_device_brightness_set',
+            details=f'LED brightness set to {brightness}/255',
+        )
+    except Device.DoesNotExist:
+        logger.warning(f'MQTT: device_id={device_id} không tồn tại')
+    except Exception as e:
+        logger.error(f'MQTT: Error publishing control: {e}')
+
+
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
         logger.info('MQTT: Đã kết nối broker thành công')
