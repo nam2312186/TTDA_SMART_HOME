@@ -48,8 +48,11 @@ function mapUser(u: any): User {
 
 function mapDevice(d: any): Device {
   const rawTypeName = String(d.type_name || '').toLowerCase();
-  const sensorTypes = ['sensor', 'temperature', 'humidity', 'light', 'motion'];
-  const isSensor = sensorTypes.includes(rawTypeName);
+  const sensorTypes = ['sensor', 'temperature', 'humidity', 'motion'];
+  const hasThreshold = Boolean(d.threshold_data || d.threshold);
+  // "light" can be both sensor and actuator in this project, so infer by threshold presence.
+  const isLightSensor = rawTypeName === 'light' && hasThreshold;
+  const isSensor = sensorTypes.includes(rawTypeName) || isLightSensor;
   const mappedType: Device['type'] = isSensor ? 'sensor' : 'actuator';
   const mappedSubType = isSensor
     ? (['temperature', 'humidity', 'light', 'motion'].includes(rawTypeName) ? rawTypeName : 'temperature')

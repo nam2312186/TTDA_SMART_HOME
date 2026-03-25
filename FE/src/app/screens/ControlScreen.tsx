@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
-import { Lightbulb, Fan, DoorOpen, CheckSquare, Square, ChevronDown } from 'lucide-react';
+import { Lightbulb, Fan, DoorOpen, ChevronDown } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
-import { Checkbox } from '../components/ui/checkbox';
 import { Badge } from '../components/ui/badge';
 import { Slider } from '../components/ui/slider';
 import { useApp } from '../context/AppContext';
@@ -12,8 +11,7 @@ interface ControlScreenProps {
 }
 
 export const ControlScreen: React.FC<ControlScreenProps> = ({ onNavigate }) => {
-  const { devices, rooms, toggleDevices, setBrightness } = useApp();
-  const [selectedDevices, setSelectedDevices] = useState<string[]>([]);
+  const { devices, rooms, setBrightness, toggleDevice } = useApp();
   const [filterType, setFilterType] = useState<'all' | 'light' | 'fan' | 'door'>('all');
   const [expandedDeviceId, setExpandedDeviceId] = useState<string | null>(null);
 
@@ -23,29 +21,6 @@ export const ControlScreen: React.FC<ControlScreenProps> = ({ onNavigate }) => {
     filterType === 'all'
       ? actuators
       : actuators.filter((d) => d.subType === filterType);
-
-  const toggleSelection = (deviceId: string) => {
-    setSelectedDevices((prev) =>
-      prev.includes(deviceId)
-        ? prev.filter((id) => id !== deviceId)
-        : [...prev, deviceId]
-    );
-  };
-
-  const selectAll = () => {
-    setSelectedDevices(filteredDevices.map((d) => d.id));
-  };
-
-  const deselectAll = () => {
-    setSelectedDevices([]);
-  };
-
-  const handleBulkAction = () => {
-    if (selectedDevices.length > 0) {
-      toggleDevices(selectedDevices);
-      setSelectedDevices([]);
-    }
-  };
 
   const devicesByType = {
     light: actuators.filter((d) => d.subType === 'light'),
@@ -130,37 +105,6 @@ export const ControlScreen: React.FC<ControlScreenProps> = ({ onNavigate }) => {
           </Button>
         </div>
 
-        {/* Selection Actions */}
-        {selectedDevices.length > 0 && (
-          <Card className="bg-blue-50 border-blue-200">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-sm font-medium text-blue-900">
-                  {selectedDevices.length} device{selectedDevices.length !== 1 ? 's' : ''} selected
-                </span>
-                <Button variant="ghost" size="sm" onClick={deselectAll}>
-                  Clear
-                </Button>
-              </div>
-              <Button onClick={handleBulkAction} className="w-full">
-                Toggle Selected Devices
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Bulk Selection */}
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={selectAll} className="flex-1">
-            <CheckSquare className="w-4 h-4 mr-1" />
-            Select All
-          </Button>
-          <Button variant="outline" size="sm" onClick={deselectAll} className="flex-1">
-            <Square className="w-4 h-4 mr-1" />
-            Deselect All
-          </Button>
-        </div>
-
         {/* Device List */}
         <div className="space-y-2">
           {filteredDevices.length === 0 ? (
@@ -170,9 +114,9 @@ export const ControlScreen: React.FC<ControlScreenProps> = ({ onNavigate }) => {
           ) : (
             filteredDevices.map((device) => {
               const room = rooms.find((r) => r.id === device.roomId);
-              const isSelected = selectedDevices.includes(device.id);
               const isExpanded = expandedDeviceId === device.id;
               const isLight = device.subType === 'light';
+              const brightnessPercent = Math.round(((device.brightness || 0) / 255) * 100);
               const Icon =
                 device.subType === 'light'
                   ? Lightbulb
@@ -183,18 +127,10 @@ export const ControlScreen: React.FC<ControlScreenProps> = ({ onNavigate }) => {
               return (
                 <Card
                   key={device.id}
-                  className={`cursor-pointer transition-all ${
-                    isSelected ? 'ring-2 ring-blue-500' : ''
-                  }`}
-                  onClick={() => toggleSelection(device.id)}
+                  className="cursor-pointer transition-all"
                 >
                   <CardContent className="p-4">
                     <div className="flex items-center gap-3">
-                      <Checkbox
-                        checked={isSelected}
-                        onCheckedChange={() => toggleSelection(device.id)}
-                        onClick={(e) => e.stopPropagation()}
-                      />
                       <div
                         className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
                           device.isOn ? 'bg-green-100' : 'bg-gray-100'
@@ -222,27 +158,39 @@ export const ControlScreen: React.FC<ControlScreenProps> = ({ onNavigate }) => {
                           </Badge>
                           {isLight && device.isOn && (
                             <span className="text-xs text-yellow-600">
-                              {device.brightness || 0}%
+                              {brightnessPercent}%
                             </span>
                           )}
                         </div>
                       </div>
-                      {isLight && (
+                      <div className="flex items-center gap-1">
                         <Button
-                          variant="ghost"
                           size="sm"
+                          variant={device.isOn ? 'default' : 'outline'}
                           onClick={(e) => {
                             e.stopPropagation();
-                            setExpandedDeviceId(isExpanded ? null : device.id);
+                            toggleDevice(device.id);
                           }}
                         >
-                          <ChevronDown
-                            className={`w-4 h-4 transition-transform ${
-                              isExpanded ? 'rotate-180' : ''
-                            }`}
-                          />
+                          {device.isOn ? 'Turn Off' : 'Turn On'}
                         </Button>
-                      )}
+                        {isLight && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setExpandedDeviceId(isExpanded ? null : device.id);
+                            }}
+                          >
+                            <ChevronDown
+                              className={`w-4 h-4 transition-transform ${
+                                isExpanded ? 'rotate-180' : ''
+                              }`}
+                            />
+                          </Button>
+                        )}
+                      </div>
                     </div>
 
                     {/* Brightness Slider for Light Devices */}
@@ -254,11 +202,11 @@ export const ControlScreen: React.FC<ControlScreenProps> = ({ onNavigate }) => {
                               Brightness
                             </label>
                             <span className="text-sm font-semibold text-gray-900">
-                              {device.brightness || 0}%
+                              {brightnessPercent}%
                             </span>
                           </div>
                           <Slider
-                            value={[device.brightness || 0]}
+                            value={[brightnessPercent]}
                             onValueChange={(value) => {
                               const brightness = Math.round((value[0] / 100) * 255);
                               setBrightness(device.id, brightness);
