@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode, useMemo, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
   Floor,
   Room,
@@ -269,6 +269,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [historyLogs, setHistoryLogs] = useState<HistoryLog[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [allAuditLogs, setAllAuditLogs] = useState<AuditLog[]>([]);
+  const brightnessSyncTimersRef = useRef<Record<string, number>>({});
 
   const syncLatestSensorValues = useCallback(async () => {
     const latestSensorData = await sensorDataApi.latest().catch(() => []);
@@ -356,6 +357,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     fetchAll();
   }, [fetchAll, currentUser?.id]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(brightnessSyncTimersRef.current).forEach((timerId) => {
+        window.clearTimeout(timerId);
+      });
+      brightnessSyncTimersRef.current = {};
+    };
+  }, []);
 
   // Fallback anti-delay: nếu websocket miss event thì vẫn sync latest data mỗi 5s.
   useEffect(() => {
@@ -580,15 +590,27 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const setBrightness = async (deviceId: string, brightness: number) => {
-    try {
-      const clampedBrightness = Math.max(0, Math.min(255, Math.round(brightness)));
-      await devicesApi.setBrightness(Number(deviceId), clampedBrightness);
-      setAllDevices(prev => prev.map(d =>
+    const clampedBrightness = Math.max(0, Math.min(255, Math.round(brightness)));
+
+    // Optimistic UI update for smooth slider dragging.
+    setAllDevices((prev) =>
+      prev.map((d) =>
         d.id === deviceId ? { ...d, brightness: clampedBrightness, lastUpdated: new Date() } : d
-      ));
-    } catch (e) {
-      console.error('setBrightness error', e);
+      )
+    );
+
+    const existingTimer = brightnessSyncTimersRef.current[deviceId];
+    if (existingTimer) {
+      window.clearTimeout(existingTimer);
     }
+
+    brightnessSyncTimersRef.current[deviceId] = window.setTimeout(async () => {
+      try {
+        await devicesApi.setBrightness(Number(deviceId), clampedBrightness);
+      } catch (e) {
+        console.error('setBrightness error', e);
+      }
+    }, 120);
   };
 
   const updateDeviceThreshold = (deviceId: string, min?: number, max?: number) => {
