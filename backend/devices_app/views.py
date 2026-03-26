@@ -167,7 +167,7 @@ class DeviceBrightnessView(APIView):
             import logging
             logging.getLogger('devices_app').error(f'MQTT publish error: {e}')
 
-        broadcast_device_status(device.device_id, is_on, device.device_name)
+        broadcast_device_status(device.device_id, is_on, device.device_name, brightness)
         
         return Response({
             'message': f'{device.device_name} brightness set to {brightness}/255',

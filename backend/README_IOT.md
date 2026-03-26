@@ -211,6 +211,26 @@ Gửi đồng thời nhiệt độ + độ ẩm (batch):
 ]
 ```
 
+### 3.5 Payload chuẩn cho đèn (brightness-only)
+
+Khi thiết bị là đèn (actuator), khuyến nghị gửi **chỉ độ sáng** thay vì gửi status ON/OFF.
+
+**HTTP push (token):**
+
+```json
+{ "value": 128, "metric": "light" }
+```
+
+Backend sẽ tự xử lý:
+- lưu `brightness = 128`
+- tự suy ra `status = true`
+- broadcast realtime để FE cập nhật ngay
+
+Các mức thường dùng:
+- `0` -> OFF
+- `127/128` -> khoảng 50%
+- `255` -> MAX
+
 ---
 
 ## 4. Kết nối MQTT
@@ -243,8 +263,13 @@ docker run -d --name emqx -p 1883:1883 -p 18083:18083 emqx/emqx
 | Topic | Chiều | Dữ liệu |
 |-------|-------|---------|
 | `smarthome/device/{device_id}/sensor/{metric}` | Device → Server | `{"value": 25.5, "unit": "C"}` |
-| `smarthome/device/{device_id}/status` | Device → Server | `{"status": true}` (bật) / `{"status": false}` (tắt) |
+| `smarthome/device/{device_id}/status` | Device → Server | Hỗ trợ `{"status": true/false}` hoặc `{"value": 128}` / `{"brightness": 128}` cho đèn |
 | `smarthome/device/{device_id}/control` | Server → Device | `{"value": 128}` (độ sáng 0-255) |
+
+**Quy ước cho đèn (khuyến nghị):**
+- Payload chỉ gửi độ sáng `value` (hoặc `brightness`) trong khoảng `0-255`.
+- Backend tự suy ra trạng thái: `0 -> OFF`, `>0 -> ON`.
+- Không bắt buộc thiết bị gửi `status` riêng cho đèn.
 
 **Ví dụ publish từ thiết bị (Sensor):**
 ```
@@ -628,7 +653,8 @@ POST /api/devices/{device_id}/brightness/
 ```json
 {
   "message": "Ceiling Light brightness set to 128/255",
-  "brightness": 128
+  "brightness": 128,
+  "status": true
 }
 ```
 
@@ -659,6 +685,7 @@ curl -X POST http://localhost:8000/api/devices/1/brightness/ \
 
 **Ghi chú:**
 - Giá trị được tự động clamp vào range 0-255
+- Trạng thái ON/OFF được backend tự suy ra từ brightness (`0 -> OFF`, `>0 -> ON`)
 - MQTT publish thất bại sẽ không ảnh hưởng đến API response (DB vẫn được update)
 - Để theo dõi MQTT publish log, chạy: `python manage.py mqtt_listen`
 

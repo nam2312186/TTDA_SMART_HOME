@@ -426,7 +426,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setAllDevices((prev) =>
         prev.map((device) =>
           device.id === String(eventData.device_id)
-            ? { ...device, isOn: Boolean(eventData.status), lastUpdated: new Date() }
+            ? {
+                ...device,
+                isOn: Boolean(eventData.status),
+                brightness:
+                  typeof eventData.brightness === 'number'
+                    ? Math.max(0, Math.min(255, Math.round(eventData.brightness)))
+                    : device.brightness,
+                lastUpdated: new Date(),
+              }
             : device
         )
       );

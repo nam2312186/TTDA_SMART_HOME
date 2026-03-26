@@ -61,14 +61,18 @@ def broadcast_alert(alert_id: int, sensor_id: int, message: str, device_id: int 
     })
 
 
-def broadcast_device_status(device_id: int, status: bool, device_name: str = ''):
+def broadcast_device_status(device_id: int, status: bool, device_name: str = '', brightness: int | None = None):
     """Broadcast khi thiết bị thay đổi trạng thái."""
+    payload = {
+        'event': 'device_status',
+        'device_id': device_id,
+        'device_name': device_name,
+        'status': status,
+    }
+    if brightness is not None:
+        payload['brightness'] = brightness
+
     _send('sensor_updates', {
         'type': 'device_status',
-        'data': {
-            'event': 'device_status',
-            'device_id': device_id,
-            'device_name': device_name,
-            'status': status,
-        }
+        'data': payload,
     })

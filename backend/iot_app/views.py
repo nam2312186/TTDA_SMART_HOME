@@ -9,7 +9,7 @@ from .models import IoTToken
 from .serializers import IoTTokenSerializer, IoTPushSerializer
 from monitoring_app.models import SensorData
 from monitoring_app.views import _check_threshold
-from iot_app.broadcast import broadcast_sensor_update
+from iot_app.broadcast import broadcast_sensor_update, broadcast_device_status
 from logs_app.utils import create_activity_log
 
 
@@ -55,6 +55,27 @@ class IoTPushView(APIView):
         unit = serializer.validated_data.get('unit') or ''
         metric = serializer.validated_data.get('metric') or (device.type.name_type if device.type else 'sensor')
 
+        # Light actuator payload uses brightness (0-255), status is derived by backend.
+        is_light_actuator = bool(device.type and device.type.name_type == 'light' and device.threshold_id is None)
+        if is_light_actuator and metric == 'light':
+            brightness = max(0, min(255, int(value)))
+            device.brightness = brightness
+            device.status = brightness > 0
+            device.save(update_fields=['brightness', 'status'])
+            broadcast_device_status(device.device_id, device.status, device.device_name, brightness)
+            create_activity_log(
+                device=device,
+                action='iot_device_brightness_received',
+                details=f'Received brightness: {brightness}/255',
+            )
+            return Response({
+                'message': 'Độ sáng đã được cập nhật',
+                'device_id': device.device_id,
+                'metric': metric,
+                'brightness': brightness,
+                'status': device.status,
+            }, status=status.HTTP_201_CREATED)
+
         data = SensorData.objects.create(device=device, value=value, unit=unit)
         _check_threshold(data, source='device')
         broadcast_sensor_update(device.device_id, value, unit, device.device_id, metric)
@@ -99,6 +120,22 @@ class IoTPushBatchView(APIView):
                 continue
             metric = s.validated_data.get('metric') or (device.type.name_type if device.type else 'sensor')
             unit = s.validated_data.get('unit') or ''
+
+            is_light_actuator = bool(device.type and device.type.name_type == 'light' and device.threshold_id is None)
+            if is_light_actuator and metric == 'light':
+                brightness = max(0, min(255, int(s.validated_data['value'])))
+                device.brightness = brightness
+                device.status = brightness > 0
+                device.save(update_fields=['brightness', 'status'])
+                broadcast_device_status(device.device_id, device.status, device.device_name, brightness)
+                create_activity_log(
+                    device=device,
+                    action='iot_device_brightness_received',
+                    details=f'Received batch brightness: {brightness}/255',
+                )
+                results.append({'device_id': device.device_id, 'metric': metric, 'brightness': brightness, 'ok': True})
+                continue
+
             data = SensorData.objects.create(
                 device=device,
                 value=s.validated_data['value'],

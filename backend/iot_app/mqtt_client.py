@@ -63,12 +63,34 @@ def _handle_sensor_data(device_id: int, payload: dict):
 
 
 def _handle_device_status(device_id: int, payload: dict):
-    """Cập nhật trạng thái thiết bị từ MQTT."""
+    """Cập nhật trạng thái thiết bị từ MQTT (ưu tiên brightness nếu có)."""
     from devices_app.models import Device
     from iot_app.broadcast import broadcast_device_status
     from logs_app.utils import create_activity_log
     try:
         device = Device.objects.get(pk=device_id)
+
+        raw_brightness = payload.get('brightness', payload.get('value'))
+        brightness = None
+        if raw_brightness is not None:
+            try:
+                brightness = max(0, min(255, int(raw_brightness)))
+            except (ValueError, TypeError):
+                brightness = None
+
+        if brightness is not None:
+            device.brightness = brightness
+            device.status = brightness > 0
+            device.save(update_fields=['brightness', 'status'])
+            create_activity_log(
+                device=device,
+                action='mqtt_device_brightness_received',
+                details=f'Device "{device.device_name}" brightness -> {brightness}/255',
+            )
+            broadcast_device_status(device.device_id, device.status, device.device_name, brightness)
+            logger.info(f'MQTT: Device {device_id} brightness → {brightness}/255 (status={device.status})')
+            return
+
         device.status = bool(payload.get('status', device.status))
         device.save(update_fields=['status'])
         create_activity_log(
