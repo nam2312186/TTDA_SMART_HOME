@@ -1,6 +1,6 @@
 """
 Utility: broadcast sự kiện realtime qua WebSocket channel layer.
-Dùng ở bất kỳ đâu trong BE (views, signals, MQTT handler).
+Dùng ở bất kỳ đâu trong BE (views, signals, sync worker).
 
 Ví dụ:
     from iot_app.broadcast import broadcast_sensor_update

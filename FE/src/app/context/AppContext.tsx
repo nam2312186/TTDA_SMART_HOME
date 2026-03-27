@@ -133,7 +133,7 @@ function mapAuditLog(log: any): AuditLog {
 
   const actionForCategory = actionName || rawAction;
   let category: AuditLog['category'] = 'system';
-  if (actionForCategory.startsWith('device_') || actionForCategory.includes('mqtt_device')) category = 'device';
+  if (actionForCategory.startsWith('device_')) category = 'device';
   else if (actionForCategory.startsWith('room_') || actionForCategory.includes('permission')) category = 'room';
   else if (actionForCategory.startsWith('floor_')) category = 'floor';
   else if (actionForCategory.startsWith('schedule_')) category = 'schedule';

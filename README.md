@@ -307,8 +307,8 @@ curl -X POST http://localhost:8000/api/iot/push/ \
 Xem hướng dẫn chi tiết tại: **[backend/README_IOT.md](backend/README_IOT.md)**
 
 Nội dung:
-- Cách tạo IoT Token cho thiết bị
-- Gửi dữ liệu cảm biến qua HTTP API
-- Kết nối MQTT (Mosquitto / HiveMQ)
-- Code mẫu ESP32 (Arduino)
+- CoreIoT-only architecture và luồng dong bo realtime
+- Checklist cau hinh `.env` de ket noi that
+- Cach map CoreIoT telemetry ve local devices
+- Lenh verify nhanh `coreiot_sync --once` va build FE
 

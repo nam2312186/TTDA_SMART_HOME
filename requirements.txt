@@ -12,6 +12,3 @@ channels-redis>=4.3.0
 
 # CORS
 django-cors-headers>=4.9.0
-
-# IoT MQTT
-paho-mqtt>=2.1.0

@@ -163,12 +163,40 @@ CHANNEL_LAYERS = {
     }
 }
 
-# ─── MQTT cấu hình (điền ở file /.env, KHÔNG hard-code ở đây) ─────────────
-MQTT_BROKER = os.environ.get('MQTT_BROKER', 'localhost')
-MQTT_PORT = int(os.environ.get('MQTT_PORT', 1883))
-MQTT_USERNAME = os.environ.get('MQTT_USERNAME', None)
-MQTT_PASSWORD = os.environ.get('MQTT_PASSWORD', None)
-MQTT_CLIENT_ID = os.environ.get('MQTT_CLIENT_ID', 'smarthome-django')
+# ─── CoreIoT integration config ───────────────────────────────────────────────
+COREIOT_ENABLED = os.environ.get('COREIOT_ENABLED', 'False') == 'True'
+COREIOT_BASE_URL = os.environ.get('COREIOT_BASE_URL', 'https://app.coreiot.io')
+COREIOT_LOGIN_URL = os.environ.get('COREIOT_LOGIN_URL', '')
+COREIOT_EMAIL = os.environ.get('COREIOT_EMAIL', '')
+COREIOT_PASSWORD = os.environ.get('COREIOT_PASSWORD', '')
+COREIOT_ACCESS_TOKEN = os.environ.get('COREIOT_ACCESS_TOKEN', '')
+COREIOT_AUTH_HEADER = os.environ.get('COREIOT_AUTH_HEADER', 'Authorization')
+COREIOT_AUTH_PREFIX = os.environ.get('COREIOT_AUTH_PREFIX', 'Bearer ')
+COREIOT_TIMEOUT_SECONDS = int(os.environ.get('COREIOT_TIMEOUT_SECONDS', 10))
+
+COREIOT_DEVICE_ID = os.environ.get('COREIOT_DEVICE_ID', '')
+COREIOT_TELEMETRY_URL_TEMPLATE = os.environ.get('COREIOT_TELEMETRY_URL_TEMPLATE', '')
+COREIOT_SETSTATE_URL_TEMPLATE = os.environ.get('COREIOT_SETSTATE_URL_TEMPLATE', '')
+COREIOT_SETSTATE_MODE = os.environ.get('COREIOT_SETSTATE_MODE', 'rpc')
+COREIOT_SETSTATE_METHOD = os.environ.get('COREIOT_SETSTATE_METHOD', 'setState')
+
+COREIOT_BRIGHTNESS_KEY = os.environ.get('COREIOT_BRIGHTNESS_KEY', 'brightness')
+COREIOT_TEMPERATURE_KEY = os.environ.get('COREIOT_TEMPERATURE_KEY', 'temperature')
+COREIOT_HUMIDITY_KEY = os.environ.get('COREIOT_HUMIDITY_KEY', 'humidity')
+COREIOT_LIGHT_KEY = os.environ.get('COREIOT_LIGHT_KEY', 'light')
+COREIOT_TELEMETRY_KEYS = [
+    COREIOT_BRIGHTNESS_KEY,
+    COREIOT_TEMPERATURE_KEY,
+    COREIOT_HUMIDITY_KEY,
+    COREIOT_LIGHT_KEY,
+]
+
+COREIOT_LOCAL_LIGHT_ACTUATOR_ID = os.environ.get('COREIOT_LOCAL_LIGHT_ACTUATOR_ID', '')
+COREIOT_LOCAL_TEMPERATURE_SENSOR_ID = os.environ.get('COREIOT_LOCAL_TEMPERATURE_SENSOR_ID', '')
+COREIOT_LOCAL_HUMIDITY_SENSOR_ID = os.environ.get('COREIOT_LOCAL_HUMIDITY_SENSOR_ID', '')
+COREIOT_LOCAL_LIGHT_SENSOR_ID = os.environ.get('COREIOT_LOCAL_LIGHT_SENSOR_ID', '')
+COREIOT_SYNC_INTERVAL_SECONDS = int(os.environ.get('COREIOT_SYNC_INTERVAL_SECONDS', 2))
+COREIOT_AUTO_SYNC_ON_RUNSERVER = os.environ.get('COREIOT_AUTO_SYNC_ON_RUNSERVER', 'True') == 'True'
 
 # ─── CORS - cho phép FE (Vite dev server) gọi BE ───────────────
 CORS_ALLOWED_ORIGINS = [

@@ -21,18 +21,18 @@ class IotAppConfig(AppConfig):
         if os.environ.get('RUN_MAIN') != 'true':
             return
 
-        def _publish_initial_state():
+        from django.conf import settings
+        if not getattr(settings, 'COREIOT_ENABLED', False):
+            return
+        if not getattr(settings, 'COREIOT_AUTO_SYNC_ON_RUNSERVER', True):
+            return
+
+        def _start_coreiot_sync():
             try:
                 time.sleep(1.0)
-                from iot_app.mqtt_client import create_mqtt_client, publish_initial_light_states
-
-                client, broker, port = create_mqtt_client()
-                client.connect(broker, port, keepalive=60)
-                client.loop_start()
-                publish_initial_light_states(client)
-                client.loop_stop()
-                client.disconnect()
+                from iot_app.coreiot_sync import run_forever
+                run_forever()
             except Exception as exc:
-                logger.warning(f'Initial light state publish skipped: {exc}')
+                logger.warning(f'CoreIoT auto sync skipped: {exc}')
 
-        threading.Thread(target=_publish_initial_state, daemon=True).start()
+        threading.Thread(target=_start_coreiot_sync, daemon=True).start()

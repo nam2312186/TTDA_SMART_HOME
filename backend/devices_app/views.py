@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from iot_app.broadcast import broadcast_device_status
-from iot_app.mqtt_client import create_mqtt_client, publish_device_control
+from iot_app.coreiot_client import CoreIoTClient
 from logs_app.utils import create_activity_log
 
 from .models import Device, DeviceType
@@ -154,18 +154,20 @@ class DeviceBrightnessView(APIView):
             details=f'Device "{device.device_name}" brightness set to {brightness}/255',
         )
         
-        # Publish to MQTT broker
-        try:
-            mqtt_client, broker, port = create_mqtt_client()
-            mqtt_client.connect(broker, port, keepalive=60)
-            mqtt_client.loop_start()
-            publish_device_control(mqtt_client, device.device_id, brightness)
-            mqtt_client.loop_stop()
-            mqtt_client.disconnect()
-        except Exception as e:
-            # Log error but still return success since DB was updated
-            import logging
-            logging.getLogger('devices_app').error(f'MQTT publish error: {e}')
+        # Sync brightness to CoreIoT (if configured).
+        from django.conf import settings
+        if getattr(settings, 'COREIOT_ENABLED', False):
+            try:
+                coreiot_device_id = getattr(settings, 'COREIOT_DEVICE_ID', '').strip()
+                if coreiot_device_id:
+                    client = CoreIoTClient()
+                    ok = client.set_brightness(coreiot_device_id, brightness)
+                    if not ok:
+                        import logging
+                        logging.getLogger('devices_app').warning('CoreIoT setState did not return success')
+            except Exception as e:
+                import logging
+                logging.getLogger('devices_app').error(f'CoreIoT setState error: {e}')
 
         broadcast_device_status(device.device_id, is_on, device.device_name, brightness)
         
