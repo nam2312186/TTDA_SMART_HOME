@@ -1,12 +1,12 @@
 # Hướng Dẫn Demo IoT + FE + BE
 
-Tài liệu này dùng để demo các cảnh (a)-(d) bạn yêu cầu, đồng thời hướng dẫn từng bước thực hiện từ backend, frontend đến IoT (CoreIoT + giả lập local).
+Tài liệu này dùng để demo các cảnh (a)-(d) bạn yêu cầu, đồng thời hướng dẫn từng bước thực hiện từ backend, frontend đến IoT thật qua CoreIoT.
 
 ## 1. Mục tiêu demo
 
 - (a) Bật/tắt thiết bị ở app -> trạng thái thay đổi hai chiều (app <-> server <-> cloud).
 - (b) Thử nghiệm thay đổi giá trị cảm biến (nóng/lạnh, sáng/tối) -> app cập nhật realtime.
-- (c) Thay đổi trên server/giả lập -> app thay đổi, và ngược lại.
+- (c) Thay đổi trên server/cloud -> app thay đổi, và ngược lại.
 - (d) Giới thiệu các giao diện đã hoàn thành và tổng kết tiến độ.
 
 ## 2. Chuẩn bị trước demo
@@ -78,22 +78,13 @@ Khi mở FE, backend sẽ có log websocket `CONNECT /ws/sensors/`.
 
 - Giá trị nhiệt độ/độ ẩm/ánh sáng thay đổi, app cập nhật realtime.
 
-### Cách làm (không cần thiết bị thật)
-
-Có 2 cách:
+### Cách làm (với thiết bị IoT thật qua cloud)
 
 1. Đồng bộ từ CoreIoT:
 
 ```bash
 cd backend
 python manage.py coreiot_sync --once
-```
-
-2. Giả lập local bằng script stream:
-
-```bash
-cd backend/iot_app/examples
-./stream_sensor_to_app.ps1 -Token <IOT_TOKEN> -Metric temperature -Unit C -StartValue 26 -Step 0.3 -IntervalSeconds 2 -Count 10
 ```
 
 Thay metric theo cảnh:
@@ -107,7 +98,7 @@ Thay metric theo cảnh:
 - Dashboard/Alerts trên FE đổi số theo từng lần push.
 - Lịch sử sensor tăng dần theo `data_id`.
 
-## (c) Cảnh thay đổi trên server/giả lập và ngược lại
+## (c) Cảnh thay đổi trên server/cloud và ngược lại
 
 ### Mục tiêu
 
@@ -116,9 +107,8 @@ Thay metric theo cảnh:
 
 ### Cách làm
 
-1. Server -> app:
-   - Chạy script stream local (như phần b).
-   - Hoặc chạy `coreiot_sync --once` để kéo dữ liệu cloud về.
+1. Server/cloud -> app:
+  - Chạy `coreiot_sync --once` để kéo dữ liệu cloud về.
 2. App -> server/cloud:
    - Trên FE đổi trạng thái đèn/fan.
    - Kiểm tra backend log và DB cập nhật.
@@ -141,7 +131,7 @@ Thay metric theo cảnh:
 
 ### Tổng kết tiến độ hiện tại
 
-- Module 1 - Nhận và hiển thị dữ liệu từ thiết bị: Đã làm được. Dữ liệu từ CoreIoT và dữ liệu giả lập local đều hiển thị trên ứng dụng theo thời gian thực.
+- Module 1 - Nhận và hiển thị dữ liệu từ thiết bị: Đã làm được. Dữ liệu từ CoreIoT hiển thị trên ứng dụng theo thời gian thực.
 - Module 2 - Kiểm tra dữ liệu vượt ngưỡng cho phép: Đã làm được. Hệ thống đã có cơ chế cảnh báo ngưỡng và hiển thị trong màn hình Alerts.
 - Module 3 - Điều khiển thiết bị: Đã làm được. Bật/tắt thiết bị và chỉnh mức đèn từ ứng dụng đã đồng bộ qua backend và cloud.
 - Module 4 - Ghi nhận hoạt động: Đã làm được. Lịch sử thao tác và dữ liệu cảm biến được ghi nhận và xem lại qua logs/history.
@@ -161,7 +151,7 @@ Thay metric theo cảnh:
 2. Frontend UP (mở được trang Vite URL hiện tại).
 3. `coreiot_sync --once` thành công.
 4. WebSocket CONNECT trong log backend.
-5. Test 1 lần stream local (3-5 mẫu) thành công.
+5. Test 1 vòng đồng bộ cloud (`coreiot_sync --once`) thành công.
 6. Test bật/tắt đèn và fan trên FE.
 7. Test thay đổi giá trị temperature/humidity/light.
 8. Mở Alerts và xác nhận có cập nhật.
@@ -191,9 +181,8 @@ python manage.py coreiot_sync --once
 cd FE
 npm run dev
 
-# Giả lập local push 1 mẫu
-cd backend/iot_app/examples
-./create_iot_token_and_push_test.ps1 -DeviceId 1 -Metric temperature -Unit C -Value 27.5
+# Kiểm tra đồng bộ cloud
+python manage.py coreiot_sync --once
 ```
 
 ## 8. Chốt nội dung khi báo cáo tiến độ
