@@ -106,51 +106,34 @@ class CoreIoTClient:
 
         logger.warning("CoreIoT login failed: cannot extract token")
         return False
-
-    # def _find_telemetry_dict(self, payload: Any) -> dict[str, Any]:
-    #     wanted_keys = set(getattr(settings, "COREIOT_TELEMETRY_KEYS", ["brightness", "temperature", "humidity", "light"]))
-
-    #     def walk(node: Any) -> dict[str, Any] | None:
-    #         if isinstance(node, dict):
-    #             if any(k in node for k in wanted_keys):
-    #                 return node
-    #             for value in node.values():
-    #                 found = walk(value)
-    #                 if found is not None:
-    #                     return found
-    #         elif isinstance(node, list):
-    #             for item in node:
-    #                 found = walk(item)
-    #                 if found is not None:
-    #                     return found
-    #         return None
-
-    #     found = walk(payload)
-    #     return found or {}
     
     def _find_telemetry_dict(self, payload: Any) -> dict[str, Any]:
         wanted_keys = set(getattr(settings, "COREIOT_TELEMETRY_KEYS", ["brightness", "temperature", "humidity", "light"]))
 
         def walk(node: Any) -> dict[str, Any] | None:
             if isinstance(node, dict):
-                # Nếu thấy dictionary chứa các key mình cần
+                # If this dictionary contains telemetry keys we care about, flatten list values.
                 if any(k in node for k in wanted_keys):
                     flattened = {}
                     for k, v in node.items():
                         if k in wanted_keys and isinstance(v, list) and len(v) > 0:
-                            # Lấy giá trị 'value' của phần tử đầu tiên trong mảng
-                            flattened[k] = v[0].get("value")
+                            first_item = v[0]
+                            if isinstance(first_item, dict):
+                                flattened[k] = first_item.get("value")
+                            else:
+                                flattened[k] = first_item
                         else:
                             flattened[k] = v
                     return flattened
-                
                 for value in node.values():
                     found = walk(value)
-                    if found is not None: return found
+                    if found is not None:
+                        return found
             elif isinstance(node, list):
                 for item in node:
                     found = walk(item)
-                    if found is not None: return found
+                    if found is not None:
+                        return found
             return None
 
         found = walk(payload)
