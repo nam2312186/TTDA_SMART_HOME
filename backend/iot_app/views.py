@@ -78,11 +78,11 @@ class IoTPushView(APIView):
 
         data = SensorData.objects.create(device=device, value=value, unit=unit)
         _check_threshold(data, source='device')
-        broadcast_sensor_update(device.device_id, value, unit, device.device_id, metric)
+        broadcast_sensor_update(device.device_id, data.value, unit, device.device_id, metric)
         create_activity_log(
             device=device,
             action='iot_sensor_data_received',
-            details=f'Received {metric}: {value}{unit}',
+            details=f'Received {metric}: {data.value}{unit}',
         )
 
         return Response({
@@ -146,7 +146,7 @@ class IoTPushBatchView(APIView):
             create_activity_log(
                 device=device,
                 action='iot_sensor_data_received',
-                details=f'Received batch {metric}: {s.validated_data["value"]}{unit}',
+                details=f'Received batch {metric}: {data.value}{unit}',
             )
             results.append({'data_id': data.data_id, 'device_id': device.device_id, 'metric': metric, 'ok': True})
 

@@ -9,6 +9,15 @@ class SensorDataSerializer(serializers.ModelSerializer):
         model = SensorData
         fields = '__all__'
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        value = data.get('value')
+        try:
+            data['value'] = round(float(value), 2)
+        except (TypeError, ValueError):
+            pass
+        return data
+
     def get_device_name(self, obj):
         return obj.device.device_name if obj.device else None
 

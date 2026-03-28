@@ -39,13 +39,14 @@ def _get_device(device_id: str) -> Device | None:
 
 
 def _upsert_sensor(device: Device, metric: str, value: float, unit: str = "") -> None:
+    rounded_value = round(float(value), 2)
     latest = SensorData.objects.filter(device=device).first()
-    if latest and float(latest.value) == float(value) and str(latest.unit or "") == str(unit or ""):
+    if latest and float(latest.value) == rounded_value and str(latest.unit or "") == str(unit or ""):
         return
 
-    entry = SensorData.objects.create(device=device, value=value, unit=unit)
+    entry = SensorData.objects.create(device=device, value=rounded_value, unit=unit)
     _check_threshold(entry, source="device")
-    broadcast_sensor_update(device.device_id, value, unit, device.device_id, metric)
+    broadcast_sensor_update(device.device_id, entry.value, unit, device.device_id, metric)
 
 
 def sync_once() -> bool:

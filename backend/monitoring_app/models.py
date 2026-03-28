@@ -32,6 +32,12 @@ class SensorData(models.Model):
         managed = settings.MANAGED_DB_TABLES
         ordering = ['-recorded_at']
 
+    def save(self, *args, **kwargs):
+        # Normalize sensor value precision across all ingest paths.
+        if self.value is not None:
+            self.value = round(float(self.value), 2)
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"Device {self.device_id} = {self.value} at {self.recorded_at}"
 
