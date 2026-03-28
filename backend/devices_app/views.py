@@ -1,3 +1,6 @@
+import logging
+
+from django.conf import settings
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.response import Response
@@ -9,6 +12,8 @@ from logs_app.utils import create_activity_log
 
 from .models import Device, DeviceType
 from .serializers import DeviceSerializer, DeviceTypeSerializer
+
+logger = logging.getLogger('devices_app')
 
 
 class DeviceTypeListView(APIView):
@@ -141,6 +146,33 @@ class DeviceBrightnessView(APIView):
             brightness = max(0, min(255, int(brightness)))
         except (ValueError, TypeError):
             return Response({'error': 'Invalid brightness value'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Brightness control must be synchronized via CoreIoT, not local-only command flow.
+        if not getattr(settings, 'COREIOT_ENABLED', False):
+            return Response(
+                {'error': 'CoreIoT control is disabled. Brightness sync requires CoreIoT.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        coreiot_device_id = getattr(settings, 'COREIOT_DEVICE_ID', '').strip()
+        if not coreiot_device_id:
+            return Response(
+                {'error': 'Missing COREIOT_DEVICE_ID. Cannot send brightness to CoreIoT.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        try:
+            ok = CoreIoTClient().set_brightness(coreiot_device_id, brightness)
+        except Exception as e:
+            logger.error(f'CoreIoT setState error: {e}')
+            ok = False
+
+        if not ok:
+            logger.warning('CoreIoT setState did not return success')
+            return Response(
+                {'error': 'Failed to sync brightness to CoreIoT. Local state was not updated.'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
         
         is_on = brightness > 0
         device.brightness = brightness
@@ -153,21 +185,6 @@ class DeviceBrightnessView(APIView):
             action='device_brightness_set',
             details=f'Device "{device.device_name}" brightness set to {brightness}/255',
         )
-        
-        # Sync brightness to CoreIoT (if configured).
-        from django.conf import settings
-        if getattr(settings, 'COREIOT_ENABLED', False):
-            try:
-                coreiot_device_id = getattr(settings, 'COREIOT_DEVICE_ID', '').strip()
-                if coreiot_device_id:
-                    client = CoreIoTClient()
-                    ok = client.set_brightness(coreiot_device_id, brightness)
-                    if not ok:
-                        import logging
-                        logging.getLogger('devices_app').warning('CoreIoT setState did not return success')
-            except Exception as e:
-                import logging
-                logging.getLogger('devices_app').error(f'CoreIoT setState error: {e}')
 
         broadcast_device_status(device.device_id, is_on, device.device_name, brightness)
         

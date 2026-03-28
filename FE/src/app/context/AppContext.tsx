@@ -651,6 +651,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const setBrightness = async (deviceId: string, brightness: number) => {
     const clampedBrightness = Math.max(0, Math.min(255, Math.round(brightness)));
     const isOn = clampedBrightness > 0;
+    const previousDevice = allDevices.find((d) => d.id === deviceId);
+    const previousBrightness = previousDevice?.brightness ?? 0;
+    const previousIsOn = previousDevice?.isOn ?? false;
 
     // Optimistic UI update for smooth slider dragging.
     setAllDevices((prev) =>
@@ -671,6 +674,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         await devicesApi.setBrightness(Number(deviceId), clampedBrightness);
       } catch (e) {
         console.error('setBrightness error', e);
+        // Revert optimistic value if CoreIoT sync failed on backend.
+        setAllDevices((prev) =>
+          prev.map((d) =>
+            d.id === deviceId
+              ? {
+                  ...d,
+                  brightness: previousBrightness,
+                  isOn: previousIsOn,
+                  lastUpdated: new Date(),
+                }
+              : d
+          )
+        );
       }
     }, 120);
   };

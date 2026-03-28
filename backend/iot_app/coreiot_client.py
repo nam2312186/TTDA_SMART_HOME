@@ -112,8 +112,19 @@ class CoreIoTClient:
 
         def walk(node: Any) -> dict[str, Any] | None:
             if isinstance(node, dict):
+                # If this dictionary contains telemetry keys we care about, flatten list values.
                 if any(k in node for k in wanted_keys):
-                    return node
+                    flattened = {}
+                    for k, v in node.items():
+                        if k in wanted_keys and isinstance(v, list) and len(v) > 0:
+                            first_item = v[0]
+                            if isinstance(first_item, dict):
+                                flattened[k] = first_item.get("value")
+                            else:
+                                flattened[k] = first_item
+                        else:
+                            flattened[k] = v
+                    return flattened
                 for value in node.values():
                     found = walk(value)
                     if found is not None:
@@ -160,9 +171,7 @@ class CoreIoTClient:
             method_name = getattr(settings, "COREIOT_SETSTATE_METHOD", "setState")
             body = {
                 "method": method_name,
-                "params": {
-                    brightness_key: value,
-                },
+                "params": value,
             }
 
         result = self._request("POST", url, body=body)
