@@ -106,7 +106,7 @@ class CoreIoTClient:
 
         logger.warning("CoreIoT login failed: cannot extract token")
         return False
-
+    
     def _find_telemetry_dict(self, payload: Any) -> dict[str, Any]:
         wanted_keys = set(getattr(settings, "COREIOT_TELEMETRY_KEYS", ["brightness", "temperature", "humidity", "light"]))
 
@@ -153,13 +153,14 @@ class CoreIoTClient:
     def set_brightness(self, coreiot_device_id: str, brightness: int) -> bool:
         template = getattr(settings, "COREIOT_SETSTATE_URL_TEMPLATE", "").strip()
         if not template or not coreiot_device_id:
+            
             return False
 
         encoded_device_id = urllib.parse.quote(str(coreiot_device_id), safe="")
         path = template.replace("{device_id}", encoded_device_id)
         url = _join_url(self.base_url, path)
 
-        value = max(0, min(255, int(brightness)))
+        value = max(0, min(100, int(brightness)))
         mode = getattr(settings, "COREIOT_SETSTATE_MODE", "rpc").strip().lower()
         brightness_key = getattr(settings, "COREIOT_BRIGHTNESS_KEY", "brightness")
 
@@ -176,3 +177,4 @@ class CoreIoTClient:
 
         result = self._request("POST", url, body=body)
         return result is not None
+    

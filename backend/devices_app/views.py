@@ -143,7 +143,7 @@ class DeviceBrightnessView(APIView):
         brightness = request.data.get('brightness', 0)
         
         try:
-            brightness = max(0, min(255, int(brightness)))
+            brightness = max(0, min(100, int(brightness)))
         except (ValueError, TypeError):
             return Response({'error': 'Invalid brightness value'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -183,13 +183,13 @@ class DeviceBrightnessView(APIView):
             request=request,
             device=device,
             action='device_brightness_set',
-            details=f'Device "{device.device_name}" brightness set to {brightness}/255',
+            details=f'Device "{device.device_name}" brightness set to {brightness}/100',
         )
 
         broadcast_device_status(device.device_id, is_on, device.device_name, brightness)
         
         return Response({
-            'message': f'{device.device_name} brightness set to {brightness}/255',
+            'message': f'{device.device_name} brightness set to {brightness}/100',
             'brightness': brightness,
             'status': is_on,
         })

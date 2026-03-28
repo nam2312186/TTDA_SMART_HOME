@@ -431,7 +431,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 isOn: Boolean(eventData.status),
                 brightness:
                   typeof eventData.brightness === 'number'
-                    ? Math.max(0, Math.min(255, Math.round(eventData.brightness)))
+                    ? Math.max(0, Math.min(100, Math.round(eventData.brightness)))
                     : device.brightness,
                 lastUpdated: new Date(),
               }
@@ -649,7 +649,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const setBrightness = async (deviceId: string, brightness: number) => {
-    const clampedBrightness = Math.max(0, Math.min(255, Math.round(brightness)));
+    const clampedBrightness = Math.max(0, Math.min(100, Math.round(brightness)));
     const isOn = clampedBrightness > 0;
     const previousDevice = allDevices.find((d) => d.id === deviceId);
     const previousBrightness = previousDevice?.brightness ?? 0;

@@ -55,10 +55,10 @@ class IoTPushView(APIView):
         unit = serializer.validated_data.get('unit') or ''
         metric = serializer.validated_data.get('metric') or (device.type.name_type if device.type else 'sensor')
 
-        # Light actuator payload uses brightness (0-255), status is derived by backend.
+        # Light actuator payload uses brightness (0-100), status is derived by backend.
         is_light_actuator = bool(device.type and device.type.name_type == 'light' and device.threshold_id is None)
         if is_light_actuator and metric == 'light':
-            brightness = max(0, min(255, int(value)))
+            brightness = max(0, min(100, int(value)))
             device.brightness = brightness
             device.status = brightness > 0
             device.save(update_fields=['brightness', 'status'])
@@ -66,7 +66,7 @@ class IoTPushView(APIView):
             create_activity_log(
                 device=device,
                 action='iot_device_brightness_received',
-                details=f'Received brightness: {brightness}/255',
+                details=f'Received brightness: {brightness}/100',
             )
             return Response({
                 'message': 'Độ sáng đã được cập nhật',
@@ -123,7 +123,7 @@ class IoTPushBatchView(APIView):
 
             is_light_actuator = bool(device.type and device.type.name_type == 'light' and device.threshold_id is None)
             if is_light_actuator and metric == 'light':
-                brightness = max(0, min(255, int(s.validated_data['value'])))
+                brightness = max(0, min(100, int(s.validated_data['value'])))
                 device.brightness = brightness
                 device.status = brightness > 0
                 device.save(update_fields=['brightness', 'status'])
@@ -131,7 +131,7 @@ class IoTPushBatchView(APIView):
                 create_activity_log(
                     device=device,
                     action='iot_device_brightness_received',
-                    details=f'Received batch brightness: {brightness}/255',
+                    details=f'Received batch brightness: {brightness}/100',
                 )
                 results.append({'device_id': device.device_id, 'metric': metric, 'brightness': brightness, 'ok': True})
                 continue

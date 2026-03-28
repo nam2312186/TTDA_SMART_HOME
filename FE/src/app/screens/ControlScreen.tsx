@@ -131,7 +131,7 @@ export const ControlScreen: React.FC<ControlScreenProps> = ({ onNavigate }) => {
               const room = rooms.find((r) => r.id === device.roomId);
               const isExpanded = expandedDeviceId === device.id;
               const isLight = device.subType === 'light';
-              const brightnessPercent = Math.round(((device.brightness || 0) / 255) * 100);
+              const brightnessPercent = Math.max(0, Math.min(100, Math.round(device.brightness || 0)));
               const Icon =
                 device.subType === 'light'
                   ? Lightbulb
@@ -225,8 +225,7 @@ export const ControlScreen: React.FC<ControlScreenProps> = ({ onNavigate }) => {
                           <Slider
                             value={[brightnessPercent]}
                             onValueChange={(value) => {
-                              const brightness = Math.round((value[0] / 100) * 255);
-                              setBrightness(device.id, brightness);
+                              setBrightness(device.id, value[0]);
                             }}
                             min={0}
                             max={100}
@@ -252,7 +251,7 @@ export const ControlScreen: React.FC<ControlScreenProps> = ({ onNavigate }) => {
                             className="flex-1"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setBrightness(device.id, 127);
+                              setBrightness(device.id, 50);
                             }}
                           >
                             50%
@@ -263,7 +262,7 @@ export const ControlScreen: React.FC<ControlScreenProps> = ({ onNavigate }) => {
                             className="flex-1"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setBrightness(device.id, 255);
+                              setBrightness(device.id, 100);
                             }}
                           >
                             Max

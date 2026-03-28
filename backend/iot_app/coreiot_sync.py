@@ -78,7 +78,7 @@ def sync_once() -> bool:
         brightness = _to_int(telemetry.get(brightness_key))
         actuator = _get_device(light_actuator_id)
         if brightness is not None and actuator is not None:
-            brightness = max(0, min(255, brightness))
+            brightness = max(0, min(100, brightness))
             status = brightness > 0
             if actuator.brightness != brightness or actuator.status != status:
                 actuator.brightness = brightness
@@ -87,7 +87,7 @@ def sync_once() -> bool:
                 create_activity_log(
                     device=actuator,
                     action="coreiot_brightness_synced",
-                    details=f"CoreIoT brightness -> {brightness}/255",
+                    details=f"CoreIoT brightness -> {brightness}/100",
                 )
                 broadcast_device_status(actuator.device_id, status, actuator.device_name, brightness)
 
