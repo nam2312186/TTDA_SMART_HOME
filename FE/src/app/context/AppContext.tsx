@@ -74,8 +74,13 @@ function mapDevice(d: any): Device {
     threshold: thresholdData
       ? {
           id: String(thresholdData.threshold_id),
-          min: thresholdData.min_value ?? undefined,
-          max: thresholdData.max_value ?? undefined,
+          // Chỉ nhận threshold nếu giá trị > 0 (0 = chưa set, backend gửi default)
+          min: (typeof thresholdData.min_value === 'number' && thresholdData.min_value > 0)
+                ? thresholdData.min_value
+                : undefined,
+          max: (typeof thresholdData.max_value === 'number' && thresholdData.max_value > 0)
+                ? thresholdData.max_value
+                : undefined,
         }
       : undefined,
   };
@@ -274,6 +279,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const brightnessSyncTimersRef = useRef<Record<string, number>>({});
   const devicesSnapshotRef = useRef<Device[]>([]);
   const roomsSnapshotRef = useRef<Room[]>([]);
+  // Manual override: khi user tự tay bật/tắt thiết bị, block automation 60s cho thiết bị đó
+  const manualOverrideRef = useRef<Map<string, number>>(new Map());
+  const MANUAL_OVERRIDE_MS = 60_000;
 
   const syncLatestSensorValues = useCallback(async () => {
     const latestSensorData = await sensorDataApi.latest().catch(() => []);
@@ -510,7 +518,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               // If no threshold set for either → rule is inactive
               const fanRuleActive = tempMax !== null || humMax !== null;
               const shouldFanOn   = fanRuleActive && (tempHigh || humHigh) && motion;
+              const now = Date.now();
               fans.forEach(fan => {
+                // Skip nếu user vừa manually control thiết bị này trong 60s
+                const overrideUntil = manualOverrideRef.current.get(fan.id) ?? 0;
+                if (now < overrideUntil) return;
+
                 if (shouldFanOn && !fan.isOn) {
                   devicesApi.turnOn(Number(fan.id)).catch(() => {});
                   setAllDevices(prev => prev.map(d => d.id === fan.id ? { ...d, isOn: true, lastUpdated: new Date() } : d));
@@ -525,6 +538,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               const lightRuleActive = lightMin !== null;
               const shouldLightOn   = lightRuleActive && lightLow && motion;
               lights.forEach(light => {
+                // Skip nếu user vừa manually control thiết bị này trong 60s
+                const overrideUntil = manualOverrideRef.current.get(light.id) ?? 0;
+                if (now < overrideUntil) return;
+
                 if (shouldLightOn && !light.isOn) {
                   devicesApi.turnOn(Number(light.id)).catch(() => {});
                   setAllDevices(prev => prev.map(d => d.id === light.id ? { ...d, isOn: true, lastUpdated: new Date() } : d));
@@ -690,6 +707,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [currentUser, allDevices]);
 
   const toggleDevice = async (deviceId: string) => {
+    // Mark manual override — block automation for 60s
+    manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
     try {
       await devicesApi.toggle(Number(deviceId));
       setAllDevices(prev => prev.map(d =>
@@ -711,6 +730,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const setBrightness = async (deviceId: string, brightness: number) => {
+    manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
     const clampedBrightness = Math.max(0, Math.min(100, Math.round(brightness)));
     const serverValue = Math.round((clampedBrightness / 100) * 255); // 0-100% → 0-255
     const isOn = clampedBrightness > 0;
@@ -751,6 +771,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Fan speed: 0-100% displayed, converted to 0-255 on server
   const fanSpeedTimersRef = useRef<Record<string, number>>({});
   const setFanSpeed = async (deviceId: string, speedPercent: number) => {
+    manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
     const clamped = Math.max(0, Math.min(100, Math.round(speedPercent)));
     const isOn = clamped > 0;
     const previousDevice = allDevices.find(d => d.id === deviceId);
@@ -778,6 +799,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Direct on/off – does NOT toggle, just forces state
   const setDeviceOn = async (deviceId: string, on: boolean) => {
+    // Mark manual override — block automation for 60s
+    manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
     try {
       if (on) await devicesApi.turnOn(Number(deviceId));
       else    await devicesApi.turnOff(Number(deviceId));
