@@ -35,7 +35,6 @@ export const AddDeviceScreen: React.FC<AddDeviceScreenProps> = ({
   const actuatorTypes = [
     { value: 'light', label: 'Light' },
     { value: 'fan', label: 'Fan' },
-    { value: 'door', label: 'Door' },
   ];
 
   const sensorTypes = [

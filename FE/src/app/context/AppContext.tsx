@@ -212,6 +212,8 @@ interface AppContextType {
   toggleDevice: (deviceId: string) => void;
   toggleDevices: (deviceIds: string[]) => void;
   setBrightness: (deviceId: string, brightness: number) => void;
+  setFanSpeed: (deviceId: string, speedPercent: number) => void;
+  setDeviceOn: (deviceId: string, on: boolean) => void;
   updateDeviceThreshold: (deviceId: string, min?: number, max?: number) => void;
   clearAlert: (alertId: string) => void;
   deleteAlert: (alertId: string) => void;
@@ -474,6 +476,66 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
           if (eventType === 'sensor_data') {
             updateDeviceFromEvent(payload);
+
+            // ─── Smart Automation Logic ───────────────────────────────────
+            // Run after a brief delay to let state settle
+            window.setTimeout(() => {
+              const snap = devicesSnapshotRef.current;
+
+              // Read latest sensor values
+              const tempSensor   = snap.find(d => d.type === 'sensor' && d.subType === 'temperature');
+              const humSensor    = snap.find(d => d.type === 'sensor' && d.subType === 'humidity');
+              const lightSensor  = snap.find(d => d.type === 'sensor' && d.subType === 'light');
+              const motionSensor = snap.find(d => d.type === 'sensor' && d.subType === 'motion');
+
+              const tempVal  = typeof tempSensor?.currentValue  === 'number' ? tempSensor.currentValue  : null;
+              const humVal   = typeof humSensor?.currentValue   === 'number' ? humSensor.currentValue   : null;
+              const lightVal = typeof lightSensor?.currentValue === 'number' ? lightSensor.currentValue : null;
+              const motion   = typeof motionSensor?.currentValue === 'number' ? motionSensor.currentValue > 0 : false;
+
+              // Thresholds — only use if explicitly set by admin, no defaults
+              const tempMax  = typeof tempSensor?.threshold?.max  === 'number' ? tempSensor.threshold.max  : null;
+              const humMax   = typeof humSensor?.threshold?.max   === 'number' ? humSensor.threshold.max   : null;
+              const lightMin = typeof lightSensor?.threshold?.min === 'number' ? lightSensor.threshold.min : null;
+
+              const fans   = snap.filter(d => d.type === 'actuator' && d.subType === 'fan');
+              const lights = snap.filter(d => d.type === 'actuator' && d.subType === 'light');
+
+              // Only evaluate rule if both value AND threshold are available
+              const tempHigh  = tempMax  !== null && tempVal  !== null && tempVal  >= tempMax;
+              const humHigh   = humMax   !== null && humVal   !== null && humVal   >= humMax;
+              const lightLow  = lightMin !== null && lightVal !== null && lightVal <= lightMin;
+
+              // Fan: (temp threshold exceeded OR hum threshold exceeded) AND person present
+              // If no threshold set for either → rule is inactive
+              const fanRuleActive = tempMax !== null || humMax !== null;
+              const shouldFanOn   = fanRuleActive && (tempHigh || humHigh) && motion;
+              fans.forEach(fan => {
+                if (shouldFanOn && !fan.isOn) {
+                  devicesApi.turnOn(Number(fan.id)).catch(() => {});
+                  setAllDevices(prev => prev.map(d => d.id === fan.id ? { ...d, isOn: true, lastUpdated: new Date() } : d));
+                } else if (fanRuleActive && !motion && fan.isOn) {
+                  devicesApi.turnOff(Number(fan.id)).catch(() => {});
+                  setAllDevices(prev => prev.map(d => d.id === fan.id ? { ...d, isOn: false, lastUpdated: new Date() } : d));
+                }
+              });
+
+              // Light: below threshold AND person present
+              // If no light threshold set → rule is inactive
+              const lightRuleActive = lightMin !== null;
+              const shouldLightOn   = lightRuleActive && lightLow && motion;
+              lights.forEach(light => {
+                if (shouldLightOn && !light.isOn) {
+                  devicesApi.turnOn(Number(light.id)).catch(() => {});
+                  setAllDevices(prev => prev.map(d => d.id === light.id ? { ...d, isOn: true, lastUpdated: new Date() } : d));
+                } else if (lightRuleActive && !motion && light.isOn) {
+                  devicesApi.turnOff(Number(light.id)).catch(() => {});
+                  setAllDevices(prev => prev.map(d => d.id === light.id ? { ...d, isOn: false, lastUpdated: new Date() } : d));
+                }
+              });
+            }, 200);
+            // ─────────────────────────────────────────────────────────────
+
           } else if (eventType === 'device_status') {
             updateDeviceStatusFromEvent(payload);
           } else if (eventType === 'alert') {
@@ -650,6 +712,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const setBrightness = async (deviceId: string, brightness: number) => {
     const clampedBrightness = Math.max(0, Math.min(100, Math.round(brightness)));
+    const serverValue = Math.round((clampedBrightness / 100) * 255); // 0-100% → 0-255
     const isOn = clampedBrightness > 0;
     const previousDevice = allDevices.find((d) => d.id === deviceId);
     const previousBrightness = previousDevice?.brightness ?? 0;
@@ -671,24 +734,59 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     brightnessSyncTimersRef.current[deviceId] = window.setTimeout(async () => {
       try {
-        await devicesApi.setBrightness(Number(deviceId), clampedBrightness);
+        await devicesApi.setValue(Number(deviceId), serverValue);
       } catch (e) {
         console.error('setBrightness error', e);
-        // Revert optimistic value if CoreIoT sync failed on backend.
         setAllDevices((prev) =>
           prev.map((d) =>
             d.id === deviceId
-              ? {
-                  ...d,
-                  brightness: previousBrightness,
-                  isOn: previousIsOn,
-                  lastUpdated: new Date(),
-                }
+              ? { ...d, brightness: previousBrightness, isOn: previousIsOn, lastUpdated: new Date() }
               : d
           )
         );
       }
     }, 120);
+  };
+
+  // Fan speed: 0-100% displayed, converted to 0-255 on server
+  const fanSpeedTimersRef = useRef<Record<string, number>>({});
+  const setFanSpeed = async (deviceId: string, speedPercent: number) => {
+    const clamped = Math.max(0, Math.min(100, Math.round(speedPercent)));
+    const isOn = clamped > 0;
+    const previousDevice = allDevices.find(d => d.id === deviceId);
+
+    setAllDevices(prev => prev.map(d =>
+      d.id === deviceId ? { ...d, brightness: clamped, isOn, lastUpdated: new Date() } : d
+    ));
+
+    const existingTimer = fanSpeedTimersRef.current[deviceId];
+    if (existingTimer) window.clearTimeout(existingTimer);
+
+    fanSpeedTimersRef.current[deviceId] = window.setTimeout(async () => {
+      try {
+        await devicesApi.setFanSpeed(Number(deviceId), clamped);
+      } catch (e) {
+        console.error('setFanSpeed error', e);
+        setAllDevices(prev => prev.map(d =>
+          d.id === deviceId
+            ? { ...d, brightness: previousDevice?.brightness ?? 0, isOn: previousDevice?.isOn ?? false, lastUpdated: new Date() }
+            : d
+        ));
+      }
+    }, 120);
+  };
+
+  // Direct on/off – does NOT toggle, just forces state
+  const setDeviceOn = async (deviceId: string, on: boolean) => {
+    try {
+      if (on) await devicesApi.turnOn(Number(deviceId));
+      else    await devicesApi.turnOff(Number(deviceId));
+      setAllDevices(prev => prev.map(d =>
+        d.id === deviceId ? { ...d, isOn: on, lastUpdated: new Date() } : d
+      ));
+    } catch (e) {
+      console.error('setDeviceOn error', e);
+    }
   };
 
   const updateDeviceThreshold = (deviceId: string, min?: number, max?: number) => {
@@ -951,6 +1049,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       toggleDevice,
       toggleDevices,
       setBrightness,
+      setFanSpeed,
+      setDeviceOn,
       updateDeviceThreshold,
       clearAlert,
       deleteAlert,

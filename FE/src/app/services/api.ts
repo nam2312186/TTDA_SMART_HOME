@@ -94,6 +94,13 @@ export const devicesApi = {
   turnOff: (id: number) => request(`/devices/${id}/off/`, { method: 'POST' }),
   toggle: (id: number) => request(`/devices/${id}/toggle/`, { method: 'POST' }),
   setBrightness: (id: number, brightness: number) => request(`/devices/${id}/brightness/`, { method: 'POST', body: JSON.stringify({ brightness }) }),
+  /** Set fan speed: percent 0-100 → server value 0-255 */
+  setFanSpeed: (id: number, speedPercent: number) => {
+    const value = Math.round((Math.max(0, Math.min(100, speedPercent)) / 100) * 255);
+    return request(`/devices/${id}/brightness/`, { method: 'POST', body: JSON.stringify({ brightness: value }) });
+  },
+  /** Generic setValue – sends raw value to the brightness endpoint */
+  setValue: (id: number, value: number) => request(`/devices/${id}/brightness/`, { method: 'POST', body: JSON.stringify({ brightness: value }) }),
   byRoom: (roomId: number) => request<any[]>(`/rooms/${roomId}/devices/`),
 };
 
@@ -108,7 +115,14 @@ export const sensorsApi = {
 
 // ─── SENSOR DATA ─────────────────────────────────────────────────────────────
 export const sensorDataApi = {
-  byDevice: (deviceId: number) => request<any[]>(`/sensor-data/device/${deviceId}/`),
+  byDevice: (deviceId: number, params?: { period?: string; order?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.period) qs.set('period', params.period);
+    if (params?.order)  qs.set('order',  params.order);
+    if (params?.limit)  qs.set('limit',  String(params.limit));
+    const query = qs.toString() ? `?${qs.toString()}` : '';
+    return request<any[]>(`/sensor-data/device/${deviceId}/${query}`);
+  },
   bySensor: (sensorId: number) => request<any[]>(`/sensor-data/device/${sensorId}/`),
   latest: () => request<any[]>(`/sensor-data/latest/`),
   add: (data: { device: number; value: number; unit?: string; metric?: string }) =>

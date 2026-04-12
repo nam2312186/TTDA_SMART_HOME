@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Building2, Layers3, Cpu, CalendarClock, Thermometer, Droplets, SunMedium } from 'lucide-react';
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { ArrowLeft, Building2, Layers3, Cpu, CalendarClock, Thermometer, Droplets, SunMedium, TrendingUp, AlertCircle } from 'lucide-react';
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, ReferenceLine } from 'recharts';
 
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
@@ -179,6 +179,10 @@ export const DetailedVisualizationScreen: React.FC<DetailedVisualizationScreenPr
   const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]);
   const [series, setSeries] = useState<CompareSeries[]>([]);
   const [loading, setLoading] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+
+  // Guard: chỉ auto-select lần đầu khi metric/compareMode đổi, không chạy lại mỗi 5s
+  const initDoneRef = useRef(false);
 
   const metricIcon = METRIC_ICON[metric];
 
@@ -227,13 +231,21 @@ export const DetailedVisualizationScreen: React.FC<DetailedVisualizationScreenPr
   useEffect(() => {
     if (metricDevices.length === 0) {
       setSeries([]);
+      initDoneRef.current = false; // reset khi metric thay đổi
       return;
     }
 
-    if (compareMode === 'device' && selectedDeviceIds.length === 0) {
+    // Chỉ auto-select lần đầu - không chạy lại khi AppContext refresh 5s
+    if (compareMode === 'device' && !initDoneRef.current) {
+      initDoneRef.current = true;
       setSelectedDeviceIds(metricDevices.map((device) => device.id));
     }
-  }, [compareMode, metricDevices, selectedDeviceIds.length]);
+  }, [compareMode, metricDevices]);
+
+  // Reset guard khi user đổi metric hoặc compareMode
+  useEffect(() => {
+    initDoneRef.current = false;
+  }, [metric, compareMode]);
 
   const selectedDevices = useMemo(() => {
     if (compareMode === 'device') {
@@ -269,10 +281,8 @@ export const DetailedVisualizationScreen: React.FC<DetailedVisualizationScreenPr
     selectedRoomIds,
   ]);
 
-  useEffect(() => {
-    let isMounted = true;
-
-    const loadSeries = async () => {
+  // loadSeries dưới dạng useCallback để có thể gọi từ polling
+  const loadSeries = useCallback(async (isMounted: { current: boolean }) => {
       if (selectedDevices.length === 0) {
         setSeries([]);
         return;
@@ -283,8 +293,32 @@ export const DetailedVisualizationScreen: React.FC<DetailedVisualizationScreenPr
 
       await Promise.all(selectedDevices.map(async (device) => {
         try {
-          const response = await sensorDataApi.byDevice(Number(device.id));
-          aggregatedByDeviceId.set(device.id, aggregateSeries(Array.isArray(response) ? response : [], period));
+          // Bước 1: Lấy data theo period được chọn
+          let response = await sensorDataApi.byDevice(Number(device.id), { period, order: 'asc', limit: 500 });
+          let rows = Array.isArray(response) ? response : [];
+
+          // Bước 2: Nếu period=day có ít hơn 3 điểm, gộp thêm data từ month để cho chart có lịch sử
+          if (period === 'day' && rows.length < 3) {
+            const monthData = await sensorDataApi.byDevice(Number(device.id), { period: 'month', order: 'asc', limit: 500 });
+            const monthRows = Array.isArray(monthData) ? monthData : [];
+            // Gộp: (ưu tiên giữ data thật của hôm nay, thêm day-level bucket từ lịch sử)
+            if (monthRows.length > 0) {
+              // Kết hợp - show tât cả lịch sử trong month, bucket theo ngày
+              rows = monthRows;
+            }
+          }
+
+          // Bước 3: Nếu vẫn rỗng, lấy 300 bản ghi gần nhất không lọc
+          if (rows.length === 0) {
+            const fallback = await sensorDataApi.byDevice(Number(device.id), { order: 'desc', limit: 300 });
+            rows = Array.isArray(fallback) ? fallback.reverse() : [];
+          }
+
+          // Nếu dùng month data cho day view, đổi period aggregate sang 'month' (theo ngày)
+          const effectivePeriod = (period === 'day' && rows.length > 0 && rows.length >= 3) ? period : 
+                                  (period === 'day' && rows.length > 0) ? 'month' : period;
+
+          aggregatedByDeviceId.set(device.id, aggregateSeries(rows, effectivePeriod));
         } catch {
           aggregatedByDeviceId.set(device.id, []);
         }
@@ -367,27 +401,30 @@ export const DetailedVisualizationScreen: React.FC<DetailedVisualizationScreenPr
         });
       }
 
-      if (!isMounted) return;
-      setSeries(nextSeries.filter((item) => item.points.length > 0).sort((left, right) => left.name.localeCompare(right.name)));
+      if (!isMounted.current) return;
+      setSeries(nextSeries.sort((left, right) => left.name.localeCompare(right.name)));
+      setLastUpdated(new Date());
       setLoading(false);
-    };
+  }, [compareMode, floorById, period, roomById, selectableFloors, selectableRooms, selectedDevices, selectedFloorIds, selectedRoomIds]);
 
-    loadSeries();
+  // Effect chính: load khi selection/period thay đổi
+  useEffect(() => {
+    const ref = { current: true };
+    loadSeries(ref);
+    return () => { ref.current = false; };
+  }, [loadSeries]);
 
+  // Polling nhẹ mỗi 30s: chỉ refresh data, không reset UI/selection
+  useEffect(() => {
+    const ref = { current: true };
+    const interval = setInterval(() => {
+      if (!loading) loadSeries(ref);
+    }, 30000);
     return () => {
-      isMounted = false;
+      ref.current = false;
+      clearInterval(interval);
     };
-  }, [
-    compareMode,
-    floorById,
-    period,
-    roomById,
-    selectableFloors,
-    selectableRooms,
-    selectedDevices,
-    selectedFloorIds,
-    selectedRoomIds,
-  ]);
+  }, [loadSeries, loading]);
 
   const chartData = useMemo(() => {
     const buckets = buildBuckets(period);
@@ -627,63 +664,191 @@ export const DetailedVisualizationScreen: React.FC<DetailedVisualizationScreenPr
             <div className="mb-3 flex items-center justify-between gap-2">
               <div>
                 <p className="text-base font-semibold text-slate-900">Comparison Chart</p>
-                <p className="text-xs text-slate-500">
-                  <CalendarClock className="mr-1 inline h-3.5 w-3.5" />
+                <p className="text-xs text-slate-500 flex items-center gap-1">
+                  <CalendarClock className="inline h-3.5 w-3.5" />
                   {period === 'day' ? 'By hour in current day' : period === 'month' ? 'By day in current month' : 'By month in current year'}
+                  {lastUpdated && (
+                    <span className="ml-2 text-slate-400">
+                      · Updated {lastUpdated.toLocaleTimeString()}
+                    </span>
+                  )}
                 </p>
               </div>
-              <Badge variant="outline" className="text-slate-600">
-                {series.length} selected
-              </Badge>
+              <div className="flex items-center gap-2">
+                {loading && (
+                  <span className="w-3.5 h-3.5 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin" />
+                )}
+                <Badge variant="outline" className="text-slate-600">
+                  {series.length} selected
+                </Badge>
+              </div>
             </div>
 
             {loading ? (
-              <p className="text-sm text-slate-500">Loading chart data...</p>
-            ) : series.length === 0 ? (
-              <p className="text-sm text-slate-500">
-                {compareMode === 'device'
-                  ? 'No device series available for current metric/selection.'
-                  : compareMode === 'room'
-                    ? 'No room series available for current metric/selection.'
-                    : 'No floor series available for current metric/selection.'}
-              </p>
+              <div className="flex items-center gap-2 py-6 text-slate-500">
+                <span className="w-4 h-4 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin" />
+                <p className="text-sm">Loading chart data...</p>
+              </div>
+            ) : series.length === 0 || series.every(s => s.points.length === 0) ? (
+              <div className="text-center py-8 space-y-3">
+                <div className="w-14 h-14 rounded-full bg-slate-100 flex items-center justify-center mx-auto">
+                  {React.createElement(METRIC_ICON[metric], { className: 'w-7 h-7 text-slate-400' })}
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-600">
+                    No {METRIC_LABEL[metric]} data in this period
+                  </p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Try switching to a wider period (Month / Year) or check IoT device connection
+                  </p>
+                </div>
+                <div className="flex justify-center gap-2">
+                  {(['day', 'month', 'year'] as PeriodKey[]).map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => setPeriod(p)}
+                      className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${
+                        period === p
+                          ? 'bg-indigo-600 text-white'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      {p === 'day' ? 'Today' : p === 'month' ? 'This Month' : 'This Year'}
+                    </button>
+                  ))}
+                </div>
+              </div>
             ) : (
               <>
-                <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={chartData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis dataKey="bucket" tick={{ fontSize: 11 }} />
-                    <YAxis tick={{ fontSize: 11 }} />
-                    <Tooltip
-                      formatter={(value: any) => {
-                        if (typeof value !== 'number') return [value, METRIC_LABEL[metric]];
-                        return [`${value.toFixed(2)} ${METRIC_UNIT[metric]}`, METRIC_LABEL[metric]];
-                      }}
-                    />
-                    {series.map((seriesItem, index) => (
-                      <Line
-                        key={seriesItem.id}
-                        type="monotone"
-                        dataKey={seriesItem.id}
-                        name={seriesItem.name}
-                        stroke={LINE_COLORS[index % LINE_COLORS.length]}
-                        strokeWidth={2}
-                        dot={false}
-                        connectNulls
-                      />
-                    ))}
-                  </LineChart>
-                </ResponsiveContainer>
+                {/* Total data points across all series */}
+                {(() => {
+                  const totalPts = series.reduce((s, item) => s + item.points.length, 0);
+                  const isSparse = totalPts > 0 && totalPts < 5;
+                  return (
+                    <>
+                      {isSparse && (
+                        <div
+                          className="mb-3 flex items-start gap-2 rounded-xl px-3 py-2.5 text-xs"
+                          style={{ background: '#fef9c3', border: '1px solid #fde68a', color: '#92400e' }}
+                        >
+                          <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                          <span>
+                            <strong>{totalPts} data point(s)</strong> found in this period.
+                            Dots are shown on the chart. Try <strong>Month</strong> or <strong>Year</strong> for more history.
+                          </span>
+                        </div>
+                      )}
+                      <ResponsiveContainer width="100%" height={300}>
+                        <LineChart data={chartData} margin={{ top: 16, right: 16, left: -16, bottom: 0 }}>
+                          <defs>
+                            {series.map((seriesItem, index) => (
+                              <linearGradient key={seriesItem.id} id={`line-grad-${index}`} x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor={LINE_COLORS[index % LINE_COLORS.length]} stopOpacity={0.15} />
+                                <stop offset="95%" stopColor={LINE_COLORS[index % LINE_COLORS.length]} stopOpacity={0} />
+                              </linearGradient>
+                            ))}
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                          <XAxis
+                            dataKey="bucket"
+                            tick={{ fontSize: 10, fill: '#94a3b8' }}
+                            axisLine={false}
+                            tickLine={false}
+                            interval={period === 'month' ? 4 : period === 'year' ? 0 : 'preserveStartEnd'}
+                          />
+                          <YAxis
+                            tick={{ fontSize: 10, fill: '#94a3b8' }}
+                            axisLine={false}
+                            tickLine={false}
+                            tickFormatter={(v) => `${v}${METRIC_UNIT[metric]}`}
+                          />
+                          <Tooltip
+                            contentStyle={{
+                              background: 'rgba(15,23,42,0.9)',
+                              border: 'none',
+                              borderRadius: '12px',
+                              fontSize: 12,
+                              color: '#f1f5f9',
+                              backdropFilter: 'blur(8px)',
+                              boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+                            }}
+                            labelStyle={{ color: '#94a3b8', marginBottom: 4 }}
+                            formatter={(value: any, _name: string, props: any) => {
+                              if (typeof value !== 'number') return [value, METRIC_LABEL[metric]];
+                              const sItem = series.find(s => s.id === props.dataKey);
+                              return [`${value.toFixed(2)} ${METRIC_UNIT[metric]}`, sItem?.name || METRIC_LABEL[metric]];
+                            }}
+                          />
+                          {series.map((seriesItem, index) => {
+                            const color = LINE_COLORS[index % LINE_COLORS.length];
+                            const hasFewPoints = seriesItem.points.length <= 5;
+                            return (
+                              <Line
+                                key={seriesItem.id}
+                                type="monotone"
+                                dataKey={seriesItem.id}
+                                name={seriesItem.name}
+                                stroke={color}
+                                strokeWidth={hasFewPoints ? 2.5 : 2}
+                                dot={hasFewPoints
+                                  ? { r: 5, fill: color, stroke: '#fff', strokeWidth: 2 }
+                                  : { r: 2.5, fill: color, strokeWidth: 0 }
+                                }
+                                activeDot={{ r: 6, fill: color, stroke: '#fff', strokeWidth: 2, style: { filter: `drop-shadow(0 0 6px ${color})` } }}
+                                connectNulls
+                              />
+                            );
+                          })}
+                        </LineChart>
+                      </ResponsiveContainer>
+
+                      {/* Raw data table when sparse */}
+                      {isSparse && (
+                        <div className="mt-3">
+                          <p className="text-xs font-semibold text-slate-500 mb-2">Raw data points</p>
+                          <div className="space-y-1 max-h-40 overflow-y-auto">
+                            {series.flatMap((seriesItem, si) =>
+                              seriesItem.points.map((pt, pi) => (
+                                <div
+                                  key={`${si}-${pi}`}
+                                  className="flex items-center justify-between rounded-lg px-3 py-1.5 text-xs"
+                                  style={{ background: '#f8fafc', border: '1px solid #e2e8f0' }}
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <span className="w-2 h-2 rounded-full" style={{ background: LINE_COLORS[si % LINE_COLORS.length] }} />
+                                    <span className="font-medium text-slate-700">{seriesItem.name}</span>
+                                    <span className="text-slate-400">{pt.bucket}</span>
+                                  </div>
+                                  <span className="font-bold" style={{ color: LINE_COLORS[si % LINE_COLORS.length] }}>
+                                    {pt.value} {METRIC_UNIT[metric]}
+                                  </span>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
 
                 <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {series.map((seriesItem, index) => (
-                    <div key={seriesItem.id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
-                      <span
-                        className="mr-2 inline-block h-2.5 w-2.5 rounded-full"
-                        style={{ backgroundColor: LINE_COLORS[index % LINE_COLORS.length] }}
-                      />
-                      <span className="font-semibold text-slate-900">{seriesItem.name}</span>
-                      <span className="text-slate-500"> • {seriesItem.subtitle}</span>
+                    <div key={seriesItem.id} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="inline-block h-2.5 w-2.5 rounded-full flex-shrink-0"
+                          style={{ backgroundColor: LINE_COLORS[index % LINE_COLORS.length] }}
+                        />
+                        <span className="font-semibold text-slate-900 truncate">{seriesItem.name}</span>
+                        <span
+                          className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0"
+                          style={{ background: seriesItem.points.length > 0 ? '#dcfce7' : '#fee2e2', color: seriesItem.points.length > 0 ? '#16a34a' : '#dc2626' }}
+                        >
+                          {seriesItem.points.length} pts
+                        </span>
+                      </div>
+                      <span className="text-slate-500 text-[11px] mt-0.5 block ml-4.5">{seriesItem.subtitle}</span>
                     </div>
                   ))}
                 </div>

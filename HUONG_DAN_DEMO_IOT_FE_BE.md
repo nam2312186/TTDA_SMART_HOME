@@ -1,194 +1,291 @@
 # Hướng Dẫn Demo IoT + FE + BE
 
-Tài liệu này dùng để demo các cảnh (a)-(d) bạn yêu cầu, đồng thời hướng dẫn từng bước thực hiện từ backend, frontend đến IoT thật qua CoreIoT.
+Tài liệu này mô tả toàn bộ cách kết nối thiết bị IoT với hệ thống Smart Home, bao gồm các tính năng mới nhất: **điều khiển quạt (0-100%)**, **cảm biến nhận diện người (motion)**, và **tự động hoá dựa trên ngưỡng cảm biến**.
 
-## 1. Mục tiêu demo
+---
 
-- (a) Bật/tắt thiết bị ở app -> trạng thái thay đổi hai chiều (app <-> server <-> cloud).
-- (b) Thử nghiệm thay đổi giá trị cảm biến (nóng/lạnh, sáng/tối) -> app cập nhật realtime.
-- (c) Thay đổi trên server/cloud -> app thay đổi, và ngược lại.
-- (d) Giới thiệu các giao diện đã hoàn thành và tổng kết tiến độ.
+## 1. Mục tiêu hệ thống
 
-## 2. Chuẩn bị trước demo
+| Tính năng | Mô tả |
+|---|---|
+| Nhận dữ liệu cảm biến | Nhiệt độ, độ ẩm, ánh sáng, chuyển động (motion) |
+| Điều khiển đèn | Bật/tắt + điều chỉnh độ sáng 0–255 |
+| Điều khiển quạt | Bật/tắt + điều chỉnh tốc độ 0–255 |
+| Cảm biến motion | Nhận diện có/không có người (0 hoặc 1) |
+| Tự động hoá | Bật quạt/đèn theo ngưỡng + motion; tắt khi không có người |
+| Cảnh báo ngưỡng | Alert khi cảm biến vượt ngưỡng cấu hình |
 
-- Đã có file `.env` cấu hình CoreIoT đúng.
-- Đã migrate + seed backend.
-- Đã cài dependencies:
+---
+
+## 2. Cấu trúc tham số gửi lên từ IoT
+
+Thiết bị IoT gửi dữ liệu lên server qua CoreIoT theo định dạng **JSON telemetry**. Tên tham số phải đúng như bảng dưới:
+
+### 2.1 Tham số cảm biến (sensor)
+
+| Tên tham số | Kiểu | Đơn vị | Ví dụ | Ghi chú |
+|---|---|---|---|---|
+| `temperature` | `float` | `C` | `28.5` | Nhiệt độ phòng |
+| `humidity` | `float` | `%` | `65.0` | Độ ẩm |
+| `light` | `float` | `lux` | `350.0` | Cường độ ánh sáng |
+| `motion` | `int` | — | `0` hoặc `1` | **0 = không người, 1 = có người** |
+
+> ⚠️ **Quan trọng**: Tham số `motion` phải gửi giá trị **0 hoặc 1** (integer hoặc float đều được). Hệ thống coi `> 0` là "có người".
+
+### 2.2 Payload mẫu gửi từ thiết bị
+
+```json
+{
+  "temperature": 31.2,
+  "humidity": 72.0,
+  "light": 85.0,
+  "motion": 1
+}
+```
+
+---
+
+## 3. Điều khiển thiết bị từ app → IoT
+
+### 3.1 Điều khiển đèn (Light)
+
+App gửi lệnh `setValue` với giá trị brightness từ **0 đến 255**:
+
+| Slider app (%) | Giá trị gửi server | Trạng thái |
+|---|---|---|
+| 0% | 0 | Tắt |
+| 50% | 128 | Sáng vừa |
+| 100% | 255 | Sáng tối đa |
+
+**Payload server → CoreIoT:**
+```json
+{ "brightness": 255 }
+```
+
+### 3.2 Điều khiển quạt (Fan) ← **MỚI**
+
+App gửi lệnh `setFanSpeed` với giá trị tốc độ từ **0 đến 255** (quy đổi từ slider 0–100%):
+
+| Slider app (%) | Giá trị gửi server | Trạng thái |
+|---|---|---|
+| 0% | 0 | Tắt |
+| 25% | 64 | Tốc độ thấp |
+| 50% | 128 | Tốc độ trung bình |
+| 75% | 191 | Tốc độ cao |
+| 100% | 255 | Tốc độ tối đa |
+
+**Công thức chuyển đổi:**
+```
+server_value = round(percent / 100 * 255)
+```
+
+**Payload server → CoreIoT:**
+```json
+{ "brightness": 191 }
+```
+
+> 💡 Quạt dùng chung endpoint `/devices/{id}/brightness/` với đèn — bên thiết bị đọc giá trị `brightness` để điều tốc độ quạt tương ứng.
+
+---
+
+## 4. Logic tự động hoá (Smart Automation) ← **MỚI**
+
+Khi nhận dữ liệu từ cảm biến, hệ thống tự đánh giá và điều khiển thiết bị theo quy tắc:
+
+### 4.1 Quy tắc bật quạt
+
+```
+Điều kiện: (Nhiệt độ ≥ ngưỡng max) HOẶC (Độ ẩm ≥ ngưỡng max)
+           VÀ motion = 1 (có người)
+→ Hành động: Bật tất cả quạt trong hệ thống
+```
+
+### 4.2 Quy tắc bật đèn
+
+```
+Điều kiện: Ánh sáng ≤ ngưỡng min (tối)
+           VÀ motion = 1 (có người)
+→ Hành động: Bật tất cả đèn trong hệ thống
+```
+
+### 4.3 Quy tắc tắt tự động
+
+```
+Điều kiện: motion = 0 (không có người)
+           VÀ rule tương ứng đang active (đã cài ngưỡng)
+→ Hành động: Tắt quạt (nếu fan rule active)
+             Tắt đèn (nếu light rule active)
+```
+
+### 4.4 Cài ngưỡng
+
+Ngưỡng được cài trong app tại: **Areas → Chọn phòng → Chọn sensor → Edit**
+
+| Sensor | Field cần cài | Ví dụ |
+|---|---|---|
+| Temperature | Max threshold | `30` (°C) |
+| Humidity | Max threshold | `70` (%) |
+| Light | Min threshold | `100` (lux) |
+
+> ⚠️ **Nếu chưa cài ngưỡng → rule đó không hoạt động** (hiển thị `— N/A` trên Dashboard). Không có giá trị mặc định.
+
+---
+
+## 5. Chuẩn bị kết nối
+
+### 5.1 Yêu cầu
+
+- File `.env` đã cấu hình CoreIoT đúng
+- Backend đã migrate + seed
+- Dependencies đã cài:
   - BE: `pip install -r requirements.txt`
   - FE: `npm install` trong thư mục `FE`
-- Đã xác nhận kết nối cloud:
-  - `python manage.py coreiot_sync --once` trả về `CoreIoT sync once completed`.
 
-## 3. Khởi động hệ thống
+### 5.2 Xác nhận kết nối cloud
 
-### 3.1 Terminal Backend
+```bash
+cd backend
+python manage.py coreiot_sync --once
+# → In ra: "CoreIoT sync once completed"
+```
+
+---
+
+## 6. Khởi động hệ thống
+
+### Terminal 1 — Backend
 
 ```bash
 cd backend
 python manage.py runserver
 ```
 
-Kiểm tra nhanh:
+Kiểm tra: `http://127.0.0.1:8000/api/docs/`
 
-- Swagger: `http://127.0.0.1:8000/api/docs/`
-
-### 3.2 Terminal Frontend
+### Terminal 2 — Frontend
 
 ```bash
 cd FE
 npm run dev
 ```
 
-Lưu ý:
+> Nếu port 5173 bị chiếm, Vite tự chuyển port → dùng URL Vite in ra.
 
-- Nếu `5173` đã bị chiếm, Vite sẽ tự nhảy sang cổng khác (ví dụ `5174`).
-- Dùng URL mà Vite in ra để demo.
+### Xác nhận WebSocket realtime
 
-### 3.3 Xác nhận realtime websocket
+Khi mở FE xong, backend log sẽ có: `CONNECT /ws/sensors/`
 
-Khi mở FE, backend sẽ có log websocket `CONNECT /ws/sensors/`.
+---
 
-## 4. Kịch bản demo chi tiết
+## 7. Kịch bản demo
 
-## (a) Cảnh bật/tắt thiết bị, đồng bộ hai chiều
+### (a) Điều khiển đèn/quạt từ app
 
-### Mục tiêu
+1. Vào tab **Control**
+2. Bật/tắt hoặc kéo slider đèn/quạt
+3. Quạt: slider hiện % → server nhận 0–255
+4. Đèn: slider hiện % → server nhận 0–255
 
-- Bật/tắt trên app thì trạng thái thiết bị cập nhật ngay.
-- Nếu cloud trả telemetry mới, app tiếp tục đồng bộ theo server.
+**Kết quả:** Trạng thái đổi ngay trên app, log backend có lệnh gửi CoreIoT.
 
-### Cách làm
-
-1. Mở màn hình điều khiển thiết bị trên FE.
-2. Thử bật/tắt fan/đèn trên app.
-3. Thử kéo slider độ sáng đèn (0-255 tương ứng OFF -> ON).
-4. Quan sát:
-   - Trạng thái trên app đổi ngay.
-   - Log backend có call setState CoreIoT.
-   - Nếu cloud trả về giá trị mới, app cập nhật lại theo server.
-
-### Kết quả mong đợi
-
-- OFF: brightness = 0, status = off.
-- ON: brightness > 0, status = on.
-
-## (b) Cảnh thay đổi giá trị cảm biến (nóng/lạnh, sáng/tối)
-
-### Mục tiêu
-
-- Giá trị nhiệt độ/độ ẩm/ánh sáng thay đổi, app cập nhật realtime.
-
-### Cách làm (với thiết bị IoT thật qua cloud)
-
-1. Đồng bộ từ CoreIoT:
+### (b) Gửi dữ liệu cảm biến từ thiết bị
 
 ```bash
 cd backend
 python manage.py coreiot_sync --once
 ```
 
-Thay metric theo cảnh:
+Hoặc thiết bị tự push telemetry qua CoreIoT:
 
-- Nhiệt độ: `temperature`, unit `C`
-- Độ ẩm: `humidity`, unit `%`
-- Ánh sáng: `light`, unit `lux`
+```json
+{
+  "temperature": 32.0,
+  "humidity": 75.0,
+  "light": 50.0,
+  "motion": 1
+}
+```
 
-### Kết quả mong đợi
+**Kết quả:** Dashboard cập nhật vòng tròn gauge, Smart Automation tự bật đèn/quạt nếu đã cài ngưỡng.
 
-- Dashboard/Alerts trên FE đổi số theo từng lần push.
-- Lịch sử sensor tăng dần theo `data_id`.
+### (c) Demo nhận diện người (motion) ← **MỚI**
 
-## (c) Cảnh thay đổi trên server/cloud và ngược lại
+1. Gửi `motion: 1` → Dashboard hiển thị **🟢 Person Detected** (pulse animation)
+2. Nếu nhiệt độ/độ ẩm vượt ngưỡng → quạt tự bật
+3. Nếu ánh sáng dưới ngưỡng → đèn tự bật
+4. Gửi `motion: 0` → **⚫ No Person**, đèn/quạt tự tắt
 
-### Mục tiêu
+### (d) Tổng quan giao diện
 
-- Thao tác từ server -> app đổi.
-- Thao tác từ app -> server/cloud đổi.
+1. Đăng nhập (admin hoặc user)
+2. **Home/Dashboard**: Gauge nhiệt độ/độ ẩm/ánh sáng + Motion card + Smart Automation Status
+3. **Control**: Bật/tắt + slider đèn/quạt (0–100% UI, 0–255 server)
+4. **Areas → Room → Edit sensor**: Cài ngưỡng cho automation
+5. **Alerts**: Cảnh báo khi vượt ngưỡng
+6. **More → Reports**: Export PDF báo cáo
 
-### Cách làm
+---
 
-1. Server/cloud -> app:
-  - Chạy `coreiot_sync --once` để kéo dữ liệu cloud về.
-2. App -> server/cloud:
-   - Trên FE đổi trạng thái đèn/fan.
-   - Kiểm tra backend log và DB cập nhật.
+## 8. Checklist trước khi demo
 
-### Kết quả mong đợi
+- [ ] Backend UP (`/api/docs/` trả 200)
+- [ ] Frontend UP (mở được URL Vite)
+- [ ] `coreiot_sync --once` thành công
+- [ ] WebSocket `CONNECT /ws/sensors/` trong log backend
+- [ ] Đã cài ngưỡng cho ít nhất 1 sensor (temperature hoặc light)
+- [ ] Test bật/tắt đèn → log backend có lệnh CoreIoT
+- [ ] Test bật/tắt quạt + slider tốc độ
+- [ ] Gửi `motion: 1` + nhiệt/ẩm cao → quạt tự bật
+- [ ] Gửi `motion: 0` → đèn/quạt tự tắt
+- [ ] Mở Dashboard xác nhận Motion card + Automation Status
 
-- Hai hướng đều cập nhật dữ liệu nhất quán.
-- Không cần refresh trang vẫn thấy đổi dữ liệu.
+---
 
-## (d) Giới thiệu giao diện đã hiện thực + tổng kết tiến độ
+## 9. Xử lý sự cố
 
-### Gợi ý flow demo cho người dùng
+| Lỗi | Nguyên nhân | Cách xử lý |
+|---|---|---|
+| Port 8000 bị chiếm | Process cũ còn chạy | Tắt process rồi `runserver` lại |
+| FE không kết nối WS | Backend chưa chạy duvien Channels | Kiểm tra log backend có `daphne` hoặc channel layer |
+| CoreIoT 401 | Token hết hạn | Kiểm tra `COREIOT_TOKEN` trong `.env` |
+| Không realtime | WS disconnect | F5 lại FE; kiểm tra log WS |
+| motion không nhận | Sai tên tham số | Phải gửi đúng key `"motion"` (chữ thường) |
+| Quạt không tự bật | Chưa cài ngưỡng | Vào Edit sensor → điền Max threshold |
+| Rule hiển thị N/A | Threshold chưa cài | Vào Areas → chọn sensor → Edit → điền ngưỡng |
 
-1. Đăng nhập.
-2. Home dashboard (tổng quan).
-3. Control screen (bật/tắt + slider đèn).
-4. Alerts (cảnh báo ngưỡng).
-5. History/logs (lịch sử thao tác và sensor).
-6. Rooms/Floors/Devices (quản lý cấu trúc nhà).
+---
 
-### Tổng kết tiến độ hiện tại
-
-- Module 1 - Nhận và hiển thị dữ liệu từ thiết bị: Đã làm được. Dữ liệu từ CoreIoT hiển thị trên ứng dụng theo thời gian thực.
-- Module 2 - Kiểm tra dữ liệu vượt ngưỡng cho phép: Đã làm được. Hệ thống đã có cơ chế cảnh báo ngưỡng và hiển thị trong màn hình Alerts.
-- Module 3 - Điều khiển thiết bị: Đã làm được. Bật/tắt thiết bị và chỉnh mức đèn từ ứng dụng đã đồng bộ qua backend và cloud.
-- Module 4 - Ghi nhận hoạt động: Đã làm được. Lịch sử thao tác và dữ liệu cảm biến được ghi nhận và xem lại qua logs/history.
-- Module 5 - Ứng dụng Web/Mobile: Đã làm được phần ứng dụng web với các luồng người dùng chính (dashboard, control, alerts, history, quản lý phòng/tầng/thiết bị).
-
-### Định hướng cải tiến giao diện FE (giai đoạn tiếp theo)
-
-- Tối ưu bố cục màn hình điều khiển để thao tác bật/tắt và chỉnh mức nhanh hơn trên mobile.
-- Tăng độ trực quan của dashboard bằng nhóm thẻ dữ liệu theo ngữ cảnh (nhiệt độ, độ ẩm, ánh sáng, trạng thái thiết bị).
-- Cải thiện trạng thái phản hồi khi điều khiển (loading/success/error) để người dùng thấy rõ thiết bị đã nhận lệnh.
-- Chuẩn hóa màu sắc cảnh báo và ưu tiên thông tin quan trọng giúp theo dõi thuận mắt hơn.
-- Rà soát trải nghiệm tổng thể để giao diện tiện dụng, dễ hiểu hơn cho người dùng không chuyên kỹ thuật.
-
-## 5. Checklist demo nhanh (trước khi thuyết trình)
-
-1. Backend UP (`/api/docs/` trả 200).
-2. Frontend UP (mở được trang Vite URL hiện tại).
-3. `coreiot_sync --once` thành công.
-4. WebSocket CONNECT trong log backend.
-5. Test 1 vòng đồng bộ cloud (`coreiot_sync --once`) thành công.
-6. Test bật/tắt đèn và fan trên FE.
-7. Test thay đổi giá trị temperature/humidity/light.
-8. Mở Alerts và xác nhận có cập nhật.
-9. Mở History/Logs và xác nhận có bản ghi.
-10. Chốt flow (a)-(d) theo thứ tự trên.
-
-## 6. Xử lý sự cố nhanh
-
-- Lỗi port 8000 đang bị chiếm:
-  - Tắt process đang listen 8000 rồi chạy lại `runserver`.
-- FE không chạy 5173:
-  - Dùng port Vite tự động cấp (ví dụ 5174).
-- CoreIoT 401:
-  - Kiểm tra token/username-password, `COREIOT_LOGIN_URL`, và token hết hạn.
-- Không realtime:
-  - Kiểm tra websocket connect và log backend.
-
-## 7. Lệnh mẫu hay dùng
+## 10. Lệnh mẫu hay dùng
 
 ```bash
-# BE
+# Backend
 cd backend
 python manage.py runserver
 python manage.py coreiot_sync --once
+python manage.py migrate
 
-# FE
+# Frontend
 cd FE
 npm run dev
-
-# Kiểm tra đồng bộ cloud
-python manage.py coreiot_sync --once
+npm install  # nếu thiếu dependencies
 ```
 
-## 8. Chốt nội dung khi báo cáo tiến độ
+---
 
-Khi thuyết trình/demo, có thể chốt ngắn gọn như sau:
+## 11. Tổng kết tính năng đã hoàn thành
 
-1. Hệ thống đã hoàn thành 5 module cốt lõi (nhận dữ liệu, kiểm tra ngưỡng, điều khiển thiết bị, ghi nhận hoạt động, ứng dụng FE/BE).
-2. Demo đã xác nhận đầy đủ luồng hai chiều giữa IoT - Backend - Frontend.
-3. Giai đoạn tiếp theo tập trung cải thiện giao diện FE theo hướng thuận mắt và tiện dụng hơn cho người dùng cuối.
+| Module | Tính năng | Trạng thái |
+|---|---|---|
+| 1 | Nhận & hiển thị dữ liệu IoT realtime | ✅ Done |
+| 2 | Cảnh báo vượt ngưỡng (Alert) | ✅ Done |
+| 3a | Điều khiển đèn (bật/tắt + slider 0–255) | ✅ Done |
+| 3b | Điều khiển quạt (bật/tắt + slider 0–255) | ✅ **MỚI** |
+| 3c | Cảm biến motion nhận diện người | ✅ **MỚI** |
+| 3d | Tự động bật quạt khi nhiệt/ẩm cao + có người | ✅ **MỚI** |
+| 3e | Tự động bật đèn khi tối + có người | ✅ **MỚI** |
+| 3f | Tự động tắt khi không có người | ✅ **MỚI** |
+| 4 | Ghi nhận lịch sử & audit logs | ✅ Done |
+| 5 | Giao diện mobile-first (admin + user) | ✅ Done |
+| 6 | Phân quyền phòng theo user | ✅ Done |
+| 7 | User/Admin đều cài ngưỡng sensor trong phòng mình | ✅ **MỚI** |
+| 8 | Export báo cáo PDF | ✅ Done |

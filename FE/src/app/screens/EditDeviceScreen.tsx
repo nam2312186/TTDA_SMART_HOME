@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronLeft } from 'lucide-react';
+import { ChevronLeft, Thermometer, Droplets, Sun, Activity } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -21,6 +21,41 @@ interface EditDeviceScreenProps {
   onBack: () => void;
 }
 
+// Config ngưỡng theo loại sensor
+const SENSOR_THRESHOLD_CONFIG: Record<string, {
+  hasMin: boolean; hasMax: boolean;
+  minLabel: string; maxLabel: string;
+  minPlaceholder: string; maxPlaceholder: string;
+  hint: string;
+}> = {
+  temperature: {
+    hasMin: false, hasMax: true,
+    minLabel: '', maxLabel: 'Ngưỡng nhiệt độ tối đa (°C)',
+    minPlaceholder: '', maxPlaceholder: 'VD: 30 → quạt tự bật khi > 30°C',
+    hint: 'Khi nhiệt độ ≥ ngưỡng này + có người → quạt tự bật.',
+  },
+  humidity: {
+    hasMin: false, hasMax: true,
+    minLabel: '', maxLabel: 'Ngưỡng độ ẩm tối đa (%)',
+    minPlaceholder: '', maxPlaceholder: 'VD: 70 → quạt tự bật khi > 70%',
+    hint: 'Khi độ ẩm ≥ ngưỡng này + có người → quạt tự bật.',
+  },
+  light: {
+    hasMin: true, hasMax: false,
+    minLabel: 'Ngưỡng ánh sáng tối thiểu (lux)',
+    maxLabel: '',
+    minPlaceholder: 'VD: 100 → đèn tự bật khi < 100 lux',
+    maxPlaceholder: '',
+    hint: 'Khi ánh sáng ≤ ngưỡng này + có người → đèn tự bật.',
+  },
+  motion: {
+    hasMin: false, hasMax: false,
+    minLabel: '', maxLabel: '',
+    minPlaceholder: '', maxPlaceholder: '',
+    hint: 'Cảm biến chuyển động không cần ngưỡng — giá trị > 0 là có người.',
+  },
+};
+
 export const EditDeviceScreen: React.FC<EditDeviceScreenProps> = ({
   device,
   roomName,
@@ -41,7 +76,6 @@ export const EditDeviceScreen: React.FC<EditDeviceScreenProps> = ({
   const actuatorTypes = [
     { value: 'light', label: 'Light' },
     { value: 'fan', label: 'Fan' },
-    { value: 'door', label: 'Door' },
   ];
 
   const sensorTypes = [
@@ -51,38 +85,39 @@ export const EditDeviceScreen: React.FC<EditDeviceScreenProps> = ({
     { value: 'motion', label: 'Motion' },
   ];
 
-  const subTypeOptions = device.type === 'sensor' ? sensorTypes : actuatorTypes;
-  const isLightSensor = device.type === 'sensor' && deviceSubType === 'light';
+  const isSensor = device.type === 'sensor';
+  const subTypeOptions = isSensor ? sensorTypes : actuatorTypes;
+  const thresholdCfg = isSensor ? SENSOR_THRESHOLD_CONFIG[deviceSubType as string] : null;
+
+  const SensorIcons: Record<string, React.ReactNode> = {
+    temperature: <Thermometer className="w-4 h-4 text-orange-500" />,
+    humidity:    <Droplets className="w-4 h-4 text-blue-500" />,
+    light:       <Sun className="w-4 h-4 text-amber-500" />,
+    motion:      <Activity className="w-4 h-4 text-green-500" />,
+  };
 
   const handleSave = () => {
     setError('');
 
     if (!deviceName.trim()) {
-      setError('Device name is required');
-      return;
-    }
-
-    if (!deviceSubType) {
-      setError('Device type is required');
+      setError('Tên thiết bị không được để trống');
       return;
     }
 
     const minValue = minThreshold.trim() === '' ? undefined : Number(minThreshold);
     const maxValue = maxThreshold.trim() === '' ? undefined : Number(maxThreshold);
 
-    if (isLightSensor) {
-      if (minThreshold.trim() !== '' && !Number.isFinite(minValue)) {
-        setError('Min threshold must be a valid number');
-        return;
-      }
-      if (maxThreshold.trim() !== '' && !Number.isFinite(maxValue)) {
-        setError('Max threshold must be a valid number');
-        return;
-      }
-      if (minValue !== undefined && maxValue !== undefined && minValue > maxValue) {
-        setError('Min threshold cannot be greater than max threshold');
-        return;
-      }
+    if (minThreshold.trim() !== '' && !Number.isFinite(minValue)) {
+      setError('Ngưỡng min phải là số hợp lệ');
+      return;
+    }
+    if (maxThreshold.trim() !== '' && !Number.isFinite(maxValue)) {
+      setError('Ngưỡng max phải là số hợp lệ');
+      return;
+    }
+    if (minValue !== undefined && maxValue !== undefined && minValue > maxValue) {
+      setError('Ngưỡng min không được lớn hơn ngưỡng max');
+      return;
     }
 
     updateDevice(device.id, {
@@ -91,7 +126,7 @@ export const EditDeviceScreen: React.FC<EditDeviceScreenProps> = ({
       description: description.trim() || undefined,
     });
 
-    if (isLightSensor) {
+    if (isSensor && thresholdCfg && (thresholdCfg.hasMin || thresholdCfg.hasMax)) {
       updateDeviceThreshold(device.id, minValue, maxValue);
     }
 
@@ -99,120 +134,191 @@ export const EditDeviceScreen: React.FC<EditDeviceScreenProps> = ({
   };
 
   return (
-    <div className="h-full overflow-y-auto pb-20">
+    <div className="h-full overflow-y-auto pb-20" style={{ background: 'var(--background)' }}>
       {/* Header */}
-      <div className="bg-white border-b border-gray-200 p-4 sticky top-0 z-10">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={onBack}>
-            <ChevronLeft className="w-4 h-4" />
-          </Button>
+      <div
+        className="text-white p-5 pb-8 relative overflow-hidden"
+        style={{ background: 'linear-gradient(135deg,#1e1b4b 0%,#4338ca 70%,#6366f1 100%)' }}
+      >
+        <div className="absolute -top-6 -right-6 w-28 h-28 rounded-full opacity-20"
+          style={{ background: 'rgba(165,180,252,0.4)' }} />
+        <div className="relative z-10 flex items-center gap-3">
+          <button
+            onClick={onBack}
+            className="w-8 h-8 rounded-xl flex items-center justify-center"
+            style={{ background: 'rgba(255,255,255,0.15)' }}
+          >
+            <ChevronLeft className="w-5 h-5 text-white" />
+          </button>
           <div>
-            <h1 className="text-xl font-bold text-gray-900">Edit Device</h1>
-            <p className="text-sm text-gray-500">{roomName}</p>
+            <h1 className="text-xl font-bold">Edit Device</h1>
+            <p className="text-indigo-200 text-xs">{roomName}</p>
           </div>
         </div>
       </div>
 
-      <div className="p-4">
-        <Card>
-          <CardContent className="p-6 space-y-4">
-            {/* Device Name */}
-            <div className="space-y-2">
-              <Label htmlFor="deviceName">Device Name *</Label>
-              <Input
-                id="deviceName"
-                placeholder="e.g., Living Room Light"
-                value={deviceName}
-                onChange={(e) => setDeviceName(e.target.value)}
-              />
+      <div className="p-4 -mt-4 space-y-4">
+        {/* Main Info */}
+        <div className="rounded-2xl p-5 space-y-4"
+          style={{ background: '#fff', border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)' }}>
+          
+          {/* Device Name */}
+          <div className="space-y-1.5">
+            <Label htmlFor="deviceName" className="text-sm font-semibold text-slate-700">
+              Tên thiết bị *
+            </Label>
+            <Input
+              id="deviceName"
+              placeholder="VD: Quạt phòng ngủ"
+              value={deviceName}
+              onChange={(e) => setDeviceName(e.target.value)}
+              className="rounded-xl"
+            />
+          </div>
+
+          {/* Category (read-only) */}
+          <div className="space-y-1.5">
+            <Label className="text-sm font-semibold text-slate-700">Loại thiết bị</Label>
+            <div
+              className="flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm"
+              style={{ background: '#f8fafc', border: '1px solid #e2e8f0', color: '#64748b' }}
+            >
+              {isSensor ? SensorIcons[deviceSubType as string] : null}
+              {isSensor ? 'Sensor (Giám sát)' : 'Actuator (Điều khiển)'}
+              <span className="ml-auto text-[10px] text-slate-400">Không thể thay đổi</span>
+            </div>
+          </div>
+
+          {/* Sub type */}
+          <div className="space-y-1.5">
+            <Label htmlFor="deviceType" className="text-sm font-semibold text-slate-700">
+              Phân loại *
+            </Label>
+            <Select value={deviceSubType} onValueChange={(v) => setDeviceSubType(v as any)}>
+              <SelectTrigger className="rounded-xl">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {subTypeOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Description */}
+          <div className="space-y-1.5">
+            <Label htmlFor="description" className="text-sm font-semibold text-slate-700">
+              Mô tả (tuỳ chọn)
+            </Label>
+            <Textarea
+              id="description"
+              placeholder="Thêm thông tin mô tả..."
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={2}
+              className="rounded-xl"
+            />
+          </div>
+        </div>
+
+        {/* Threshold Section — all sensors except motion */}
+        {isSensor && thresholdCfg && (thresholdCfg.hasMin || thresholdCfg.hasMax) && (
+          <div className="rounded-2xl p-5 space-y-4"
+            style={{ background: '#fff', border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)' }}>
+            
+            <div className="flex items-center gap-2">
+              <span className="w-6 h-6 rounded-lg flex items-center justify-center"
+                style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}>
+                <Activity className="w-3.5 h-3.5 text-white" />
+              </span>
+              <h2 className="text-sm font-bold text-slate-800">Ngưỡng tự động hoá</h2>
             </div>
 
-            {/* Device Category (Read-only) */}
-            <div className="space-y-2">
-              <Label htmlFor="deviceCategory">Device Category</Label>
-              <Input
-                id="deviceCategory"
-                value={device.type === 'sensor' ? 'Sensor (Monitoring)' : 'Actuator (Controllable)'}
-                disabled
-                className="bg-gray-50"
-              />
-              <p className="text-xs text-gray-500">
-                Device category cannot be changed after creation
-              </p>
+            {/* Hint */}
+            <div className="rounded-xl p-3 text-xs"
+              style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#15803d' }}>
+              💡 {thresholdCfg.hint}
             </div>
 
-            {/* Device Type */}
-            <div className="space-y-2">
-              <Label htmlFor="deviceType">Device Type *</Label>
-              <Select value={deviceSubType} onValueChange={setDeviceSubType}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {subTypeOptions.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Description */}
-            <div className="space-y-2">
-              <Label htmlFor="description">Description (Optional)</Label>
-              <Textarea
-                id="description"
-                placeholder="Add any additional details..."
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={3}
-              />
-            </div>
-
-            {isLightSensor && (
-              <>
-                <div className="space-y-2">
-                  <Label htmlFor="minThreshold">Alert Min Threshold (Optional)</Label>
-                  <Input
-                    id="minThreshold"
-                    type="number"
-                    value={minThreshold}
-                    onChange={(e) => setMinThreshold(e.target.value)}
-                    placeholder="e.g., 20"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="maxThreshold">Alert Max Threshold (Optional)</Label>
-                  <Input
-                    id="maxThreshold"
-                    type="number"
-                    value={maxThreshold}
-                    onChange={(e) => setMaxThreshold(e.target.value)}
-                    placeholder="e.g., 35"
-                  />
-                </div>
-              </>
-            )}
-
-            {error && (
-              <div className="text-sm text-red-600 bg-red-50 p-3 rounded-lg">
-                {error}
+            {thresholdCfg.hasMin && (
+              <div className="space-y-1.5">
+                <Label htmlFor="minThreshold" className="text-sm font-semibold text-slate-700">
+                  {thresholdCfg.minLabel}
+                </Label>
+                <Input
+                  id="minThreshold"
+                  type="number"
+                  value={minThreshold}
+                  onChange={(e) => setMinThreshold(e.target.value)}
+                  placeholder={thresholdCfg.minPlaceholder}
+                  className="rounded-xl"
+                />
               </div>
             )}
 
-            {/* Action Buttons */}
-            <div className="flex gap-3 pt-4">
-              <Button variant="outline" onClick={onBack} className="flex-1">
-                Cancel
-              </Button>
-              <Button onClick={handleSave} className="flex-1">
-                Save Changes
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+            {thresholdCfg.hasMax && (
+              <div className="space-y-1.5">
+                <Label htmlFor="maxThreshold" className="text-sm font-semibold text-slate-700">
+                  {thresholdCfg.maxLabel}
+                </Label>
+                <Input
+                  id="maxThreshold"
+                  type="number"
+                  value={maxThreshold}
+                  onChange={(e) => setMaxThreshold(e.target.value)}
+                  placeholder={thresholdCfg.maxPlaceholder}
+                  className="rounded-xl"
+                />
+              </div>
+            )}
+
+            {/* Clear button */}
+            {(minThreshold || maxThreshold) && (
+              <button
+                onClick={() => { setMinThreshold(''); setMaxThreshold(''); }}
+                className="text-xs text-red-400 hover:text-red-600 transition-colors"
+              >
+                🗑 Xóa ngưỡng đã cài
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Motion info box */}
+        {isSensor && deviceSubType === 'motion' && (
+          <div className="rounded-2xl p-4 text-xs"
+            style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#15803d' }}>
+            🟢 Cảm biến chuyển động: giá trị <strong>{'>'} 0</strong> = có người → tự động bật quạt/đèn theo điều kiện.
+          </div>
+        )}
+
+        {error && (
+          <div className="rounded-xl p-3 text-sm text-red-600"
+            style={{ background: '#fef2f2', border: '1px solid #fecaca' }}>
+            {error}
+          </div>
+        )}
+
+        {/* Action Buttons */}
+        <div className="flex gap-3">
+          <button
+            onClick={onBack}
+            className="flex-1 py-3 rounded-2xl text-sm font-semibold transition-all"
+            style={{ background: '#f1f5f9', color: '#64748b', border: '1px solid #e2e8f0' }}
+          >
+            Huỷ
+          </button>
+          <button
+            onClick={handleSave}
+            className="flex-1 py-3 rounded-2xl text-sm font-bold text-white transition-all hover:opacity-90"
+            style={{ background: 'linear-gradient(135deg,#4338ca,#6366f1)' }}
+          >
+            Lưu thay đổi
+          </button>
+        </div>
       </div>
     </div>
   );

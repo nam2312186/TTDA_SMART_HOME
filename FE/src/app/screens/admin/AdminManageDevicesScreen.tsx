@@ -8,7 +8,6 @@ import {
   Cpu,
   Lightbulb,
   Fan,
-  DoorClosed,
   Thermometer,
   Droplets,
   Sun,
@@ -37,7 +36,7 @@ import {
 import { Badge } from '../../components/ui/badge';
 import { useApp } from '../../context/AppContext';
 import { Device, DeviceType, SensorType, ActuatorType } from '../../types';
-import { toast } from 'sonner';
+import { toast } from '../../components/InAppToast';
 
 interface AdminManageDevicesScreenProps {
   onBack: () => void;
@@ -84,8 +83,6 @@ export const AdminManageDevicesScreen: React.FC<AdminManageDevicesScreenProps> =
           return Lightbulb;
         case 'fan':
           return Fan;
-        case 'door':
-          return DoorClosed;
       }
     }
     return Cpu;
@@ -192,7 +189,6 @@ export const AdminManageDevicesScreen: React.FC<AdminManageDevicesScreenProps> =
       return [
         { value: 'light', label: 'Light' },
         { value: 'fan', label: 'Fan' },
-        { value: 'door', label: 'Door' },
       ];
     }
   };

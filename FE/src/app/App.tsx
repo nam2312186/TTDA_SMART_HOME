@@ -27,7 +27,7 @@ import { ManageFloorsScreen } from './screens/admin/ManageFloorsScreen';
 import { AuditLogsScreen } from './screens/AuditLogsScreen';
 import { DetailedVisualizationScreen } from './screens/DetailedVisualizationScreen';
 import { Device, Alert, Schedule } from './types';
-import { Toaster } from './components/ui/sonner';
+import { InAppToastProvider, ToastBridge } from './components/InAppToast';
 
 type AuthScreen =
   | { type: 'splash' }
@@ -279,7 +279,9 @@ function MainApp() {
   ].includes(currentScreen.type);
 
   return (
-    <div className="h-screen w-full max-w-md mx-auto bg-gray-50 flex flex-col">
+    <div className="h-screen w-full max-w-md mx-auto flex flex-col" style={{ background: 'var(--background)' }}>
+      <InAppToastProvider>
+        <ToastBridge />
       {/* Screen Content */}
       <div className="flex-1 overflow-hidden">
         {currentScreen.type === 'home' && (
@@ -396,6 +398,7 @@ function MainApp() {
       {showBottomNav && (
         <BottomNav activeTab={activeTab} onTabChange={handleTabChange} />
       )}
+      </InAppToastProvider>
     </div>
   );
 }
@@ -404,7 +407,6 @@ export default function App() {
   return (
     <AppProvider>
       <MainApp />
-      <Toaster />
     </AppProvider>
   );
 }

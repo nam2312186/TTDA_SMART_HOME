@@ -118,25 +118,34 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({ onNavigate }) => {
   };
 
   return (
-    <div className="h-full overflow-y-auto pb-20">
+    <div className="h-full overflow-y-auto pb-20" style={{ background: 'var(--background)' }}>
       {/* Header */}
-      <div className="bg-white border-b border-gray-200 p-4 sticky top-0 z-10">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-bold text-gray-900">Alerts</h1>
-            <p className="text-sm text-gray-500">
-              {activeAlerts.length} active, {clearedAlerts.length} cleared
-            </p>
+      <div
+        className="text-white p-5 pb-8 relative overflow-hidden"
+        style={{ background: 'linear-gradient(135deg,#7c2d12 0%,#c2410c 50%,#ea580c 100%)' }}
+      >
+        <div className="absolute -top-8 -right-8 w-36 h-36 rounded-full opacity-20"
+          style={{ background: 'rgba(253,186,116,0.4)' }} />
+        <div className="relative z-10">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">Alerts</h1>
+              <p className="text-orange-200 text-sm mt-0.5">
+                {activeAlerts.length} active · {clearedAlerts.length} cleared
+              </p>
+            </div>
+            <button
+              onClick={() => setShowThresholdPanel((prev) => !prev)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-semibold transition-all shrink-0"
+              style={showThresholdPanel
+                ? { background: 'rgba(255,255,255,0.9)', color: '#c2410c' }
+                : { background: 'rgba(255,255,255,0.2)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)' }
+              }
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              Alert Devices
+            </button>
           </div>
-          <Button
-            variant={showThresholdPanel ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setShowThresholdPanel((prev) => !prev)}
-            className="shrink-0"
-          >
-            <SlidersHorizontal className="w-4 h-4 mr-2" />
-            Alert Devices
-          </Button>
         </div>
       </div>
 
@@ -284,140 +293,130 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({ onNavigate }) => {
 
         {/* Summary Cards */}
         <div className="grid grid-cols-3 gap-3">
-          <Card className="text-center">
-            <CardContent className="p-3">
-              <div className="text-lg font-bold text-gray-900">
-                {alerts.length}
+          {[
+            { label: 'Total', value: alerts.length, gradient: 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: '#6366f1' },
+            { label: 'Active', value: activeAlerts.length, gradient: 'linear-gradient(135deg,#ef4444,#f97316)', color: '#ef4444' },
+            { label: 'Cleared', value: clearedAlerts.length, gradient: 'linear-gradient(135deg,#10b981,#0ea5e9)', color: '#10b981' },
+          ].map(({ label, value, gradient, color }, i) => (
+            <div
+              key={label}
+              className={`rounded-2xl p-3.5 text-center animate-float-up stagger-${i + 1}`}
+              style={{ background: '#fff', border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)' }}
+            >
+              <div
+                className="text-2xl font-bold animate-count"
+                style={{ color }}
+              >
+                {value}
               </div>
-              <div className="text-xs text-gray-500">Total</div>
-            </CardContent>
-          </Card>
-
-          <Card className="text-center">
-            <CardContent className="p-3">
-              <div className="text-lg font-bold text-orange-600">
-                {activeAlerts.length}
+              <div className="text-xs font-semibold mt-1" style={{ color: 'var(--muted-foreground)' }}>
+                {label}
               </div>
-              <div className="text-xs text-gray-500">Active</div>
-            </CardContent>
-          </Card>
-
-          <Card className="text-center">
-            <CardContent className="p-3">
-              <div className="text-lg font-bold text-green-600">
-                {clearedAlerts.length}
-              </div>
-              <div className="text-xs text-gray-500">Cleared</div>
-            </CardContent>
-          </Card>
+            </div>
+          ))}
         </div>
 
         {/* Filter Buttons */}
         <div className="flex gap-2">
-          <Button
-            variant={filter === 'all' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setFilter('all')}
-            className="flex-1"
-          >
-            All ({alerts.length})
-          </Button>
-          <Button
-            variant={filter === 'active' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setFilter('active')}
-            className="flex-1"
-          >
-            Active ({activeAlerts.length})
-          </Button>
-          <Button
-            variant={filter === 'cleared' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setFilter('cleared')}
-            className="flex-1"
-          >
-            Cleared ({clearedAlerts.length})
-          </Button>
+          {(['all', 'active', 'cleared'] as const).map((f) => {
+            const labels: Record<string, string> = { all: `All (${alerts.length})`, active: `Active (${activeAlerts.length})`, cleared: `Cleared (${clearedAlerts.length})` };
+            const isActive = filter === f;
+            return (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className="flex-1 py-2 rounded-xl text-xs font-semibold transition-all capitalize"
+                style={isActive
+                  ? { background: 'var(--gradient-brand)', color: '#fff', boxShadow: 'var(--shadow-glow)' }
+                  : { background: '#fff', color: '#6b7280', border: '1px solid var(--border)' }
+                }
+              >
+                {labels[f]}
+              </button>
+            );
+          })}
         </div>
 
         {/* Alerts List */}
         {sortedAlerts.length === 0 ? (
           <div className="text-center py-12">
-            <AlertTriangle className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-500">No alerts to display</p>
+            <AlertTriangle className="w-12 h-12 mx-auto mb-3 opacity-20" style={{ color: '#f97316' }} />
+            <p className="text-gray-400 font-medium">No alerts to display</p>
           </div>
         ) : (
-          <div className="space-y-2">
-            {sortedAlerts.map((alert) => (
-              <Card
-                key={alert.id}
-                className={`cursor-pointer hover:shadow-md transition-shadow ${
-                  alert.cleared ? 'opacity-60' : ''
-                }`}
-                onClick={() => onNavigate('alertDetail', alert)}
-              >
-                <CardContent className="p-4">
-                  <div className="flex items-start gap-3">
-                    <div
-                      className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${getSeverityColor(
-                        alert.severity
-                      )}`}
-                    >
-                      {alert.cleared ? (
-                        <CheckCircle2 className="w-5 h-5" />
-                      ) : (
-                        <AlertTriangle className="w-5 h-5" />
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-2 mb-1">
-                        <h3 className="font-medium text-gray-900 truncate">
-                          {alert.deviceName}
-                        </h3>
-                        <Badge
-                          variant={alert.cleared ? 'secondary' : 'default'}
-                          className="text-xs capitalize flex-shrink-0"
-                        >
-                          {alert.severity}
-                        </Badge>
+          <div className="space-y-2.5">
+            {sortedAlerts.map((alert, idx) => {
+              const sMap: Record<string, { bg: string; border: string; iconBg: string; iconText: string; badgeBg: string; badgeText: string }> = {
+                high: { bg: '#fff5f5', border: '#fecaca', iconBg: '#fee2e2', iconText: '#ef4444', badgeBg: '#fee2e2', badgeText: '#ef4444' },
+                medium: { bg: '#fff7ed', border: '#fed7aa', iconBg: '#ffedd5', iconText: '#f97316', badgeBg: '#ffedd5', badgeText: '#f97316' },
+                low: { bg: '#fefce8', border: '#fde68a', iconBg: '#fef9c3', iconText: '#eab308', badgeBg: '#fef9c3', badgeText: '#eab308' },
+              };
+              const s = sMap[alert.severity] || sMap.low;
+              return (
+                <div
+                  key={alert.id}
+                  className={`rounded-2xl cursor-pointer transition-all hover:scale-[1.01] active:scale-[0.99] animate-float-up stagger-${Math.min(idx + 1, 6)} ${alert.cleared ? 'opacity-60' : ''}`}
+                  style={{ background: s.bg, border: `1px solid ${s.border}`, boxShadow: 'var(--shadow-sm)' }}
+                  onClick={() => onNavigate('alertDetail', alert)}
+                >
+                  <div className="p-4">
+                    <div className="flex items-start gap-3">
+                      <div
+                        className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${!alert.cleared ? 'pulse-danger' : ''}`}
+                        style={{ background: s.iconBg }}
+                      >
+                        {alert.cleared ? (
+                          <CheckCircle2 className="w-5 h-5" style={{ color: '#10b981' }} />
+                        ) : (
+                          <AlertTriangle className="w-5 h-5" style={{ color: s.iconText }} />
+                        )}
                       </div>
-                      <p className="text-sm text-gray-600 line-clamp-2 mb-2">
-                        {alert.message}
-                      </p>
-                      {(alert.metric || alert.thresholdValue !== undefined || alert.actualValue !== undefined) && (
-                        <div className="mb-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                          <div>
-                            {alert.metric ? `${alert.metric} threshold` : 'Threshold'}
-                            {alert.thresholdDirection === 'high' ? ' exceeded ' : alert.thresholdDirection === 'low' ? ' dropped below ' : ' '}
-                            {alert.thresholdValue ?? '--'}{alert.unit || ''}
-                          </div>
-                          <div>
-                            Recorded value: {alert.actualValue ?? '--'}{alert.unit || ''}
-                          </div>
-                          {alert.triggeredAction && alert.triggeredAction !== 'none' && (
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2 mb-1">
+                          <h3 className="font-semibold text-gray-900 truncate text-sm">
+                            {alert.deviceName}
+                          </h3>
+                          <span
+                            className="text-xs font-bold px-2 py-0.5 rounded-full capitalize flex-shrink-0"
+                            style={{ background: s.badgeBg, color: s.badgeText }}
+                          >
+                            {alert.severity}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-500 line-clamp-2 mb-2">
+                          {alert.message}
+                        </p>
+                        {(alert.metric || alert.thresholdValue !== undefined || alert.actualValue !== undefined) && (
+                          <div
+                            className="mb-2 rounded-xl px-3 py-2 text-xs"
+                            style={{ background: 'rgba(15,14,26,0.05)', color: '#6b7280' }}
+                          >
                             <div>
-                              Auto action: {alert.triggeredAction}
-                              {alert.targetDeviceName ? ` -> ${alert.targetDeviceName}` : ''}
+                              {alert.metric ? `${alert.metric} threshold` : 'Threshold'}
+                              {alert.thresholdDirection === 'high' ? ' exceeded ' : alert.thresholdDirection === 'low' ? ' dropped below ' : ' '}
+                              <strong>{alert.thresholdValue ?? '--'}{alert.unit || ''}</strong>
                             </div>
+                            <div>Recorded: <strong>{alert.actualValue ?? '--'}{alert.unit || ''}</strong></div>
+                            {alert.triggeredAction && alert.triggeredAction !== 'none' && (
+                              <div>Auto: {alert.triggeredAction}{alert.targetDeviceName ? ` → ${alert.targetDeviceName}` : ''}</div>
+                            )}
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2" style={{ color: 'var(--muted-foreground)', fontSize: '11px' }}>
+                          <span>{new Date(alert.timestamp).toLocaleString()}</span>
+                          {alert.cleared && alert.clearedAt && (
+                            <>
+                              <span>·</span>
+                              <span style={{ color: '#10b981' }}>Cleared {new Date(alert.clearedAt).toLocaleTimeString()}</span>
+                            </>
                           )}
                         </div>
-                      )}
-                      <div className="flex items-center gap-2 text-xs text-gray-500">
-                        <span>{new Date(alert.timestamp).toLocaleString()}</span>
-                        {alert.cleared && alert.clearedAt && (
-                          <>
-                            <span>•</span>
-                            <span className="text-green-600">
-                              Cleared {new Date(alert.clearedAt).toLocaleTimeString()}
-                            </span>
-                          </>
-                        )}
                       </div>
                     </div>
                   </div>
-                </CardContent>
-              </Card>
-            ))}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

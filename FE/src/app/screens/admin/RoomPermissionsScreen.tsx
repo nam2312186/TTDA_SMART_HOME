@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ChevronLeft, Save, User, Check } from 'lucide-react';
 import { Card, CardContent } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
@@ -12,7 +12,7 @@ import {
 } from '../../components/ui/select';
 import { useApp } from '../../context/AppContext';
 import { usersApi, permissionsApi } from '../../services/api';
-import { toast } from 'sonner';
+import { toast } from '../../components/InAppToast';
 
 interface RoomPermissionsScreenProps {
   onBack: () => void;

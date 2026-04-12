@@ -1,5 +1,6 @@
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from datetime import timedelta
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -96,7 +97,8 @@ class SensorDataLatestView(APIView):
         latest = []
         devices = Device.objects.all()
         for device in devices:
-            entry = SensorData.objects.filter(device=device).first()
+            # Lấy bản ghi MỚI NHẤT cho mỗi thiết bị (ordering model là -recorded_at)
+            entry = SensorData.objects.filter(device=device).order_by('-recorded_at').first()
             if entry:
                 latest.append(entry)
         serializer = SensorDataSerializer(latest, many=True)
@@ -105,8 +107,43 @@ class SensorDataLatestView(APIView):
 
 class SensorDataByDeviceView(APIView):
     def get(self, request, device_id):
-        data = SensorData.objects.filter(device_id=device_id)
-        serializer = SensorDataSerializer(data, many=True)
+        """
+        GET /api/sensor-data/device/<device_id>/
+        Query params:
+          - period=day|month|year  -> lọc theo khoảng thời gian
+          - limit=N                -> giới hạn số bản ghi (default 500)
+          - order=asc|desc         -> sắp xếp (default asc theo recorded_at)
+        """
+        period = request.query_params.get('period', None)
+        limit = int(request.query_params.get('limit', 500))
+        order = request.query_params.get('order', 'asc')
+
+        qs = SensorData.objects.filter(device_id=device_id)
+
+        # Lọc theo period
+        if period == 'day':
+            start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            qs = qs.filter(recorded_at__gte=start)
+        elif period == 'month':
+            now = timezone.now()
+            start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            qs = qs.filter(recorded_at__gte=start)
+        elif period == 'year':
+            now = timezone.now()
+            start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+            qs = qs.filter(recorded_at__gte=start)
+        # Nếu không có period (None), trả về tất cả (FE tự lọc)
+
+        # Sắp xếp
+        if order == 'desc':
+            qs = qs.order_by('-recorded_at')
+        else:
+            qs = qs.order_by('recorded_at')
+
+        # Giới hạn
+        qs = qs[:limit]
+
+        serializer = SensorDataSerializer(qs, many=True)
         return Response(serializer.data)
 
 
