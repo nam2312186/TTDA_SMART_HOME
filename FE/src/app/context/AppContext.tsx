@@ -49,10 +49,18 @@ function mapUser(u: any): User {
 function mapDevice(d: any): Device {
   const rawTypeName = String(d.type_name || '').toLowerCase();
   const sensorTypes = ['sensor', 'temperature', 'humidity', 'motion'];
-  const hasThreshold = Boolean(d.threshold_data || d.threshold);
-  // "light" can be both sensor and actuator in this project, so infer by threshold presence.
-  const isLightSensor = rawTypeName === 'light' && hasThreshold;
-  const isSensor = sensorTypes.includes(rawTypeName) || isLightSensor;
+
+  // Backend now sends explicit is_sensor field — use it when available.
+  // Fallback to old heuristic for backward compatibility.
+  let isSensor: boolean;
+  if (typeof d.is_sensor === 'boolean') {
+    isSensor = d.is_sensor;
+  } else {
+    const hasThreshold = Boolean(d.threshold_data || d.threshold);
+    const isLightSensor = rawTypeName === 'light' && hasThreshold;
+    isSensor = sensorTypes.includes(rawTypeName) || isLightSensor;
+  }
+
   const mappedType: Device['type'] = isSensor ? 'sensor' : 'actuator';
   const mappedSubType = isSensor
     ? (['temperature', 'humidity', 'light', 'motion'].includes(rawTypeName) ? rawTypeName : 'temperature')
@@ -81,6 +89,9 @@ function mapDevice(d: any): Device {
           max: (typeof thresholdData.max_value === 'number' && thresholdData.max_value > 0)
                 ? thresholdData.max_value
                 : undefined,
+          requireMotion: typeof thresholdData.require_motion === 'boolean' 
+                ? thresholdData.require_motion 
+                : true,
         }
       : undefined,
   };
@@ -219,7 +230,7 @@ interface AppContextType {
   setBrightness: (deviceId: string, brightness: number) => void;
   setFanSpeed: (deviceId: string, speedPercent: number) => void;
   setDeviceOn: (deviceId: string, on: boolean) => void;
-  updateDeviceThreshold: (deviceId: string, min?: number, max?: number) => void;
+  updateDeviceThreshold: (deviceId: string, min?: number, max?: number, requireMotion?: boolean) => void;
   clearAlert: (alertId: string) => void;
   deleteAlert: (alertId: string) => void;
   addSchedule: (schedule: Omit<Schedule, 'id' | 'createdAt'>) => void;
@@ -441,7 +452,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 isOn: Boolean(eventData.status),
                 brightness:
                   typeof eventData.brightness === 'number'
-                    ? Math.max(0, Math.min(100, Math.round(eventData.brightness)))
+                    ? Math.max(0, Math.min(255, Math.round(eventData.brightness)))
                     : device.brightness,
                 lastUpdated: new Date(),
               }
@@ -514,10 +525,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               const humHigh   = humMax   !== null && humVal   !== null && humVal   >= humMax;
               const lightLow  = lightMin !== null && lightVal !== null && lightVal <= lightMin;
 
-              // Fan: (temp threshold exceeded OR hum threshold exceeded) AND person present
+              // Fan: (temp threshold exceeded OR hum threshold exceeded) AND (person present if required)
               // If no threshold set for either → rule is inactive
               const fanRuleActive = tempMax !== null || humMax !== null;
-              const shouldFanOn   = fanRuleActive && (tempHigh || humHigh) && motion;
+              
+              // Fan reqMotion is based on whichever threshold is exceeded (or defaults to temp)
+              const fanReqMotion = tempHigh 
+                ? (tempSensor?.threshold?.requireMotion ?? true)
+                : humHigh 
+                  ? (humSensor?.threshold?.requireMotion ?? true)
+                  : (tempSensor?.threshold?.requireMotion ?? true);
+                  
+              const fanMotionMet = !fanReqMotion || motion;
+              const shouldFanOn   = fanRuleActive && (tempHigh || humHigh) && fanMotionMet;
+              
               const now = Date.now();
               fans.forEach(fan => {
                 // Skip nếu user vừa manually control thiết bị này trong 60s
@@ -527,16 +548,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 if (shouldFanOn && !fan.isOn) {
                   devicesApi.turnOn(Number(fan.id)).catch(() => {});
                   setAllDevices(prev => prev.map(d => d.id === fan.id ? { ...d, isOn: true, lastUpdated: new Date() } : d));
-                } else if (fanRuleActive && !motion && fan.isOn) {
+                } else if (fanRuleActive && !shouldFanOn && fan.isOn) {
                   devicesApi.turnOff(Number(fan.id)).catch(() => {});
                   setAllDevices(prev => prev.map(d => d.id === fan.id ? { ...d, isOn: false, lastUpdated: new Date() } : d));
                 }
               });
 
-              // Light: below threshold AND person present
+              // Light: below threshold AND (person present if required)
               // If no light threshold set → rule is inactive
               const lightRuleActive = lightMin !== null;
-              const shouldLightOn   = lightRuleActive && lightLow && motion;
+              const lightReqMotion = lightSensor?.threshold?.requireMotion ?? true;
+              const lightMotionMet = !lightReqMotion || motion;
+              const shouldLightOn   = lightRuleActive && lightLow && lightMotionMet;
               lights.forEach(light => {
                 // Skip nếu user vừa manually control thiết bị này trong 60s
                 const overrideUntil = manualOverrideRef.current.get(light.id) ?? 0;
@@ -545,7 +568,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 if (shouldLightOn && !light.isOn) {
                   devicesApi.turnOn(Number(light.id)).catch(() => {});
                   setAllDevices(prev => prev.map(d => d.id === light.id ? { ...d, isOn: true, lastUpdated: new Date() } : d));
-                } else if (lightRuleActive && !motion && light.isOn) {
+                } else if (lightRuleActive && !shouldLightOn && light.isOn) {
                   devicesApi.turnOff(Number(light.id)).catch(() => {});
                   setAllDevices(prev => prev.map(d => d.id === light.id ? { ...d, isOn: false, lastUpdated: new Date() } : d));
                 }
@@ -742,7 +765,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setAllDevices((prev) =>
       prev.map((d) =>
         d.id === deviceId
-          ? { ...d, brightness: clampedBrightness, isOn, lastUpdated: new Date() }
+          ? { ...d, brightness: serverValue, isOn, lastUpdated: new Date() }
           : d
       )
     );
@@ -773,11 +796,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const setFanSpeed = async (deviceId: string, speedPercent: number) => {
     manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
     const clamped = Math.max(0, Math.min(100, Math.round(speedPercent)));
+    const serverValue = Math.round((clamped / 100) * 255);
     const isOn = clamped > 0;
     const previousDevice = allDevices.find(d => d.id === deviceId);
 
     setAllDevices(prev => prev.map(d =>
-      d.id === deviceId ? { ...d, brightness: clamped, isOn, lastUpdated: new Date() } : d
+      d.id === deviceId ? { ...d, brightness: serverValue, isOn, lastUpdated: new Date() } : d
     ));
 
     const existingTimer = fanSpeedTimersRef.current[deviceId];
@@ -812,13 +836,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
-  const updateDeviceThreshold = (deviceId: string, min?: number, max?: number) => {
+  const updateDeviceThreshold = (deviceId: string, min?: number, max?: number, requireMotion: boolean = true) => {
     const device = allDevices.find((d) => d.id === deviceId);
     const threshold = device?.threshold;
     const payload = {
       threshold_data: {
         min_value: min,
         max_value: max,
+        require_motion: requireMotion,
       },
     };
     devicesApi.update(Number(deviceId), payload).catch(console.error);
@@ -834,6 +859,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 action: threshold?.action || 'none',
                 targetDeviceId: threshold?.targetDeviceId,
                 targetDeviceName: threshold?.targetDeviceName,
+                requireMotion,
               },
               lastUpdated: new Date(),
             }

@@ -160,6 +160,9 @@ cd FE
 # Cài dependencies (chỉ làm một lần)
 npm install
 
+# Cài đặt thêm thư viện xuất báo cáo (PDF/Image) nếu báo lỗi thiếu package
+npm install html2canvas jspdf
+
 # Chạy dev server
 npm run dev
 ```

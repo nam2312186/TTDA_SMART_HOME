@@ -78,7 +78,7 @@ def sync_once() -> bool:
         brightness = _to_int(telemetry.get(brightness_key))
         actuator = _get_device(light_actuator_id)
         if brightness is not None and actuator is not None:
-            brightness = max(0, min(100, brightness))
+            brightness = max(0, min(255, brightness))  # ✨ Giữ 0-255 thay vì 100
             status = brightness > 0
             if actuator.brightness != brightness or actuator.status != status:
                 actuator.brightness = brightness
@@ -87,7 +87,7 @@ def sync_once() -> bool:
                 create_activity_log(
                     device=actuator,
                     action="coreiot_brightness_synced",
-                    details=f"CoreIoT brightness -> {brightness}/100",
+                    details=f"CoreIoT brightness -> {brightness}/255",
                 )
                 broadcast_device_status(actuator.device_id, status, actuator.device_name, brightness)
 
@@ -111,6 +111,36 @@ def sync_once() -> bool:
         device = _get_device(light_sensor_id)
         if value is not None and device is not None:
             _upsert_sensor(device, "light", value, "lux")
+
+    # Motion sensor sync (NEW)
+    motion_key = getattr(settings, "COREIOT_MOTION_KEY", "motion")
+    motion_sensor_id = getattr(settings, "COREIOT_LOCAL_MOTION_SENSOR_ID", "")
+    if motion_key in telemetry:
+        value = _to_int(telemetry.get(motion_key))
+        device = _get_device(motion_sensor_id)
+        if value is not None and device is not None:
+            _upsert_sensor(device, "motion", float(value), "")
+
+    # Fan speed actuator sync (NEW)
+    fan_speed_key = getattr(settings, "COREIOT_FAN_SPEED_KEY", "fan_speed")
+    fan_actuator_id = getattr(settings, "COREIOT_LOCAL_FAN_ACTUATOR_ID", "")
+    if fan_speed_key in telemetry:
+        fan_speed = _to_int(telemetry.get(fan_speed_key))
+        fan_device = _get_device(fan_actuator_id)
+        if fan_speed is not None and fan_device is not None:
+            fan_speed = max(0, min(255, fan_speed))
+            status = fan_speed > 0
+            if fan_device.brightness != fan_speed or fan_device.status != status:
+                fan_device.brightness = fan_speed
+                fan_device.status = status
+                fan_device.save(update_fields=["brightness", "status"])
+                
+                create_activity_log(
+                    device=fan_device,
+                    action="coreiot_fan_speed_synced",
+                    details=f"CoreIoT fan speed synced -> {fan_speed}/255",
+                )
+                broadcast_device_status(fan_device.device_id, status, fan_device.device_name, fan_speed)
 
     return True
 

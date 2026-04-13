@@ -41,6 +41,7 @@ export interface Device {
     id?: string;
     min?: number;
     max?: number;
+    requireMotion?: boolean;
     action?: 'none' | 'turn_on' | 'turn_off' | 'toggle';
     targetDeviceId?: string;
     targetDeviceName?: string;

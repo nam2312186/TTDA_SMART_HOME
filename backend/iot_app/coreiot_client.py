@@ -160,7 +160,7 @@ class CoreIoTClient:
         path = template.replace("{device_id}", encoded_device_id)
         url = _join_url(self.base_url, path)
 
-        value = max(0, min(100, int(brightness)))
+        value = max(0, min(255, int(brightness)))
         mode = getattr(settings, "COREIOT_SETSTATE_MODE", "rpc").strip().lower()
         brightness_key = getattr(settings, "COREIOT_BRIGHTNESS_KEY", "brightness")
 
@@ -170,6 +170,32 @@ class CoreIoTClient:
             }
         else:
             method_name = getattr(settings, "COREIOT_SETSTATE_METHOD", "setState")
+            body = {
+                "method": method_name,
+                "params": value,
+            }
+
+        result = self._request("POST", url, body=body)
+        return result is not None
+
+    def set_value(self, coreiot_device_id: str, value: int) -> bool:
+        """Fan control - RPC method: setValue (0-255 PWM)"""
+        template = getattr(settings, "COREIOT_SETSTATE_URL_TEMPLATE", "").strip()
+        if not template or not coreiot_device_id:
+            return False
+
+        encoded_device_id = urllib.parse.quote(str(coreiot_device_id), safe="")
+        path = template.replace("{device_id}", encoded_device_id)
+        url = _join_url(self.base_url, path)
+
+        # Giữ nguyên 0-255, không clamp
+        value = max(0, min(255, int(value)))
+        mode = getattr(settings, "COREIOT_SETSTATE_MODE", "rpc").strip().lower()
+
+        if mode == "direct":
+            body = {"pwm": value}
+        else:
+            method_name = getattr(settings, "COREIOT_SETSTATE_VALUE_METHOD", "setValue")
             body = {
                 "method": method_name,
                 "params": value,

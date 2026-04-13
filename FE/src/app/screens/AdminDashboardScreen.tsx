@@ -605,7 +605,7 @@ export const AdminDashboardScreen: React.FC<AdminDashboardScreenProps> = ({ onNa
                       {ms.roomName}
                     </span>
                     <span className="text-[10px]" style={{ color: ms.detected ? '#10b981' : '#94a3b8' }}>
-                      ({ms.detected ? '🟢 Có người' : '⚫ Trống'})
+                      ({ms.detected ? '🟢 Present' : '⚫ Empty'})
                     </span>
                   </div>
                 ))}

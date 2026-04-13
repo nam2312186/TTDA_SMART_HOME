@@ -140,10 +140,17 @@ class DeviceToggleView(APIView):
 class DeviceBrightnessView(APIView):
     def post(self, request, pk):
         device = get_object_or_404(Device, pk=pk)
+        
+        if device.type.name_type != 'light':
+            return Response(
+                {'error': 'This endpoint is for light devices only'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
         brightness = request.data.get('brightness', 0)
         
         try:
-            brightness = max(0, min(100, int(brightness)))
+            brightness = max(0, min(255, int(brightness)))
         except (ValueError, TypeError):
             return Response({'error': 'Invalid brightness value'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -183,14 +190,78 @@ class DeviceBrightnessView(APIView):
             request=request,
             device=device,
             action='device_brightness_set',
-            details=f'Device "{device.device_name}" brightness set to {brightness}/100',
+            details=f'Device "{device.device_name}" brightness set to {brightness}/255',
         )
 
         broadcast_device_status(device.device_id, is_on, device.device_name, brightness)
         
         return Response({
-            'message': f'{device.device_name} brightness set to {brightness}/100',
+            'message': f'{device.device_name} brightness set to {brightness}/255',
             'brightness': brightness,
+            'status': is_on,
+        })
+
+
+class DeviceFanSpeedView(APIView):
+    def post(self, request, pk):
+        device = get_object_or_404(Device, pk=pk)
+        
+        if device.type.name_type != 'fan':
+            return Response(
+                {'error': 'This endpoint is for fan devices only'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        speed = request.data.get('speed', 0)
+        
+        try:
+            speed = max(0, min(255, int(speed)))
+        except (ValueError, TypeError):
+            return Response({'error': 'Invalid fan speed value'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not getattr(settings, 'COREIOT_ENABLED', False):
+            return Response(
+                {'error': 'CoreIoT control is disabled. Fan speed sync requires CoreIoT.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        coreiot_fan_device_id = getattr(settings, 'COREIOT_DEVICE_ID', '').strip()
+        if not coreiot_fan_device_id:
+            return Response(
+                {'error': 'Missing COREIOT_DEVICE_ID. Cannot send speed to CoreIoT.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        try:
+            ok = CoreIoTClient().set_value(coreiot_fan_device_id, speed)
+        except Exception as e:
+            logger.error(f'CoreIoT setValue error: {e}')
+            ok = False
+
+        if not ok:
+            logger.warning('CoreIoT setValue did not return success')
+            return Response(
+                {'error': 'Failed to sync fan speed to CoreIoT. Local state was not updated.'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        
+        is_on = speed > 0
+        device.brightness = speed  # Dùng field brightness cho speed
+        device.status = is_on
+        device.save(update_fields=['brightness', 'status'])
+        
+        create_activity_log(
+            request=request,
+            device=device,
+            action='device_fan_speed_set',
+            details=f'Device "{device.device_name}" fan speed set to {speed}/255',
+        )
+
+        broadcast_device_status(device.device_id, is_on, device.device_name, speed)
+        
+        return Response({
+            'message': f'{device.device_name} fan speed set to {speed}/255',
+            'speed': speed,
             'status': is_on,
         })
 

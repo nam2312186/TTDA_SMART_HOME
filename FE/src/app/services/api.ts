@@ -97,7 +97,7 @@ export const devicesApi = {
   /** Set fan speed: percent 0-100 → server value 0-255 */
   setFanSpeed: (id: number, speedPercent: number) => {
     const value = Math.round((Math.max(0, Math.min(100, speedPercent)) / 100) * 255);
-    return request(`/devices/${id}/brightness/`, { method: 'POST', body: JSON.stringify({ brightness: value }) });
+    return request(`/devices/${id}/fan-speed/`, { method: 'POST', body: JSON.stringify({ speed: value }) });
   },
   /** Generic setValue – sends raw value to the brightness endpoint */
   setValue: (id: number, value: number) => request(`/devices/${id}/brightness/`, { method: 'POST', body: JSON.stringify({ brightness: value }) }),

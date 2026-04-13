@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   User,
   Settings,
@@ -11,8 +11,17 @@ import {
   Cpu,
   Building2,
   FileText,
+  Mail,
 } from 'lucide-react';
 import { Card, CardContent } from '../components/ui/card';
+import { Button } from '../components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '../components/ui/dialog';
 import { useApp } from '../context/AppContext';
 
 interface MoreScreenProps {
@@ -25,6 +34,7 @@ export const MoreScreen: React.FC<MoreScreenProps> = ({
   onLogout,
 }) => {
   const { currentUser } = useApp();
+  const [showHelpDialog, setShowHelpDialog] = useState(false);
   const displayName = currentUser?.name || localStorage.getItem('username') || 'User';
   const displayEmail = currentUser?.email || localStorage.getItem('email') || '';
   const isAdmin = (currentUser?.role === 'admin') || localStorage.getItem('role') === 'admin';
@@ -52,7 +62,7 @@ export const MoreScreen: React.FC<MoreScreenProps> = ({
       icon: HelpCircle,
       label: 'Help & Support',
       description: 'Get help',
-      onClick: () => {},
+      onClick: () => setShowHelpDialog(true),
     },
   ];
 
@@ -206,6 +216,44 @@ export const MoreScreen: React.FC<MoreScreenProps> = ({
           <p className="mt-1">© 2026 Smart Home Inc.</p>
         </div>
       </div>
+
+      {/* Help & Support Beautiful Dialog */}
+      <Dialog open={showHelpDialog} onOpenChange={setShowHelpDialog}>
+        <DialogContent className="w-[280px] sm:w-[320px] rounded-3xl overflow-hidden p-0 border-0 bg-white">
+          <div className="bg-gradient-to-br from-blue-500 to-indigo-600 p-8 text-center relative overflow-hidden">
+             {/* Background decoration */}
+            <div className="absolute top-[-20%] right-[-10%] w-32 h-32 bg-white opacity-10 rounded-full blur-2xl"></div>
+            <div className="absolute bottom-[-10%] left-[-10%] w-24 h-24 bg-blue-300 opacity-20 rounded-full blur-xl"></div>
+            
+            <div className="w-16 h-16 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/20 shadow-lg">
+              <HelpCircle className="w-8 h-8 text-white drop-shadow-md" />
+            </div>
+            <DialogTitle className="text-white text-xl font-bold tracking-tight">Need Support?</DialogTitle>
+          </div>
+          
+          <div className="p-6 text-center space-y-6">
+            <DialogDescription className="text-slate-600 text-[15px] leading-relaxed">
+              If you have any questions or feedback to help us improve the app, please feel free to contact us directly via Email.
+            </DialogDescription>
+            
+            <div className="bg-blue-50 border border-blue-100 p-4 rounded-xl flex items-center justify-center gap-3 transition-colors hover:bg-blue-100/70">
+              <div className="bg-blue-600 p-2 rounded-full shadow-sm shadow-blue-200">
+                <Mail className="w-4 h-4 text-white" />
+              </div>
+              <a href="mailto:doanthuctapbk@gmail.com" className="text-blue-700 font-bold text-sm select-all">
+                doanthuctapbk@gmail.com
+              </a>
+            </div>
+            
+            <Button 
+              onClick={() => setShowHelpDialog(false)}
+              className="w-full rounded-xl bg-slate-900 text-white font-semibold hover:bg-slate-800"
+            >
+              Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

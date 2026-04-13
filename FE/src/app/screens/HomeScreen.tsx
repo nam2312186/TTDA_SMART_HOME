@@ -10,6 +10,9 @@ import {
   Calendar,
   Zap,
   Shield,
+  Activity,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
@@ -46,6 +49,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onNavigate }) => {
       ? humiditySensors.reduce((sum, d) => sum + (d.currentValue || 0), 0) /
         humiditySensors.length
       : 0;
+
+  // Motion sensor
+  const motionSensor = devices.find((d) => d.type === 'sensor' && d.subType === 'motion');
+  const hasMotion = typeof motionSensor?.currentValue === 'number' && motionSensor.currentValue > 0;
+  const motionAvailable = motionSensor !== undefined;
 
   // Recent alerts
   const recentAlerts = alerts.filter((a) => !a.cleared).slice(0, 3);
@@ -153,6 +161,58 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onNavigate }) => {
                 <div className="text-xs text-blue-500 font-medium">Humidity</div>
               </div>
             </div>
+
+            {/* Motion Indicator — spans full width */}
+            {motionAvailable && (
+              <div
+                className="col-span-2 flex items-center gap-3 p-3 rounded-xl transition-all"
+                style={hasMotion
+                  ? { background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', border: '1px solid #86efac' }
+                  : { background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)', border: '1px solid #e2e8f0' }
+                }
+              >
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center shadow-sm flex-shrink-0 relative"
+                  style={{ background: hasMotion ? '#dcfce7' : '#f1f5f9' }}
+                >
+                  {hasMotion ? (
+                    <Eye className="w-5 h-5 text-green-600" />
+                  ) : (
+                    <EyeOff className="w-5 h-5 text-slate-400" />
+                  )}
+                  {/* Pulse animation khi có người */}
+                  {hasMotion && (
+                    <span
+                      className="absolute inset-0 rounded-xl animate-ping opacity-30"
+                      style={{ background: '#4ade80' }}
+                    />
+                  )}
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="font-bold text-sm"
+                      style={{ color: hasMotion ? '#16a34a' : '#64748b' }}
+                    >
+                      {hasMotion ? 'Person Detected' : 'No Motion'}
+                    </span>
+                    <span
+                      className="w-2 h-2 rounded-full flex-shrink-0"
+                      style={{ background: hasMotion ? '#22c55e' : '#94a3b8' }}
+                    />
+                  </div>
+                  <p className="text-[10px] mt-0.5" style={{ color: '#94a3b8' }}>
+                    {hasMotion
+                      ? 'Automation will activate with threshold rules'
+                      : 'Automation requires motion (if enabled)'}
+                  </p>
+                </div>
+                <Activity
+                  className="w-4 h-4 flex-shrink-0"
+                  style={{ color: hasMotion ? '#4ade80' : '#cbd5e1' }}
+                />
+              </div>
+            )}
           </CardContent>
         </Card>
 

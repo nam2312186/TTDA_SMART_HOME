@@ -17,6 +17,7 @@ import { Card, CardContent } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
+import { Switch } from '../../components/ui/switch';
 import { Textarea } from '../../components/ui/textarea';
 import {
   Select,
@@ -42,10 +43,44 @@ interface AdminManageDevicesScreenProps {
   onBack: () => void;
 }
 
+const SENSOR_THRESHOLD_CONFIG: Record<string, {
+  hasMin: boolean; hasMax: boolean;
+  minLabel: string; maxLabel: string;
+  minPlaceholder: string; maxPlaceholder: string;
+  hint: string;
+}> = {
+  temperature: {
+    hasMin: false, hasMax: true,
+    minLabel: '', maxLabel: 'Maximum temperature threshold (°C)',
+    minPlaceholder: 'e.g., 30 → fan auto turns on > 30°C', maxPlaceholder: '',
+    hint: 'When temperature ≥ threshold + people present → auto turn on fan.',
+  },
+  humidity: {
+    hasMin: false, hasMax: true,
+    minLabel: '', maxLabel: 'Maximum humidity threshold (%)',
+    minPlaceholder: 'e.g., 70 → fan auto turns on > 70%', maxPlaceholder: '',
+    hint: 'When humidity ≥ threshold + people present → auto turn on fan.',
+  },
+  light: {
+    hasMin: true, hasMax: false,
+    minLabel: 'Minimum light threshold (lux)',
+    maxLabel: '',
+    minPlaceholder: 'e.g., 100 → light auto turns on < 100 lux',
+    maxPlaceholder: '',
+    hint: 'When light ≤ threshold + people present → auto turn on light.',
+  },
+  motion: {
+    hasMin: false, hasMax: false,
+    minLabel: '', maxLabel: '',
+    minPlaceholder: '', maxPlaceholder: '',
+    hint: 'Motion sensor does not need a threshold — value > 0 means motion detected.',
+  },
+};
+
 export const AdminManageDevicesScreen: React.FC<AdminManageDevicesScreenProps> = ({
   onBack,
 }) => {
-  const { devices, rooms, floors, addDevice, updateDevice, deleteDevice, currentUser } = useApp();
+  const { devices, rooms, floors, addDevice, updateDevice, deleteDevice, currentUser, updateDeviceThreshold } = useApp();
   const [showDialog, setShowDialog] = useState(false);
   const [editingDevice, setEditingDevice] = useState<Device | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
@@ -64,6 +99,10 @@ export const AdminManageDevicesScreen: React.FC<AdminManageDevicesScreenProps> =
     description: '',
     isOn: true,
   });
+
+  const [minThreshold, setMinThreshold] = useState('');
+  const [maxThreshold, setMaxThreshold] = useState('');
+  const [requireMotion, setRequireMotion] = useState(true);
 
   const getDeviceIcon = (type: DeviceType, subType: SensorType | ActuatorType) => {
     if (type === 'sensor') {
@@ -98,6 +137,9 @@ export const AdminManageDevicesScreen: React.FC<AdminManageDevicesScreenProps> =
       description: '',
       isOn: true,
     });
+    setMinThreshold('');
+    setMaxThreshold('');
+    setRequireMotion(true);
     setShowDialog(true);
   };
 
@@ -111,6 +153,9 @@ export const AdminManageDevicesScreen: React.FC<AdminManageDevicesScreenProps> =
       description: device.description || '',
       isOn: device.isOn,
     });
+    setMinThreshold(typeof device.threshold?.min === 'number' ? String(device.threshold.min) : '');
+    setMaxThreshold(typeof device.threshold?.max === 'number' ? String(device.threshold.max) : '');
+    setRequireMotion(typeof device.threshold?.requireMotion === 'boolean' ? device.threshold.requireMotion : true);
     setShowDialog(true);
   };
 
@@ -129,6 +174,13 @@ export const AdminManageDevicesScreen: React.FC<AdminManageDevicesScreenProps> =
         description: formData.description,
         isOn: formData.isOn,
       });
+
+      if (formData.deviceType === 'sensor') {
+        const minVal = minThreshold.trim() === '' ? undefined : Number(minThreshold);
+        const maxVal = maxThreshold.trim() === '' ? undefined : Number(maxThreshold);
+        updateDeviceThreshold(editingDevice.id, minVal, maxVal, requireMotion);
+      }
+
       toast.success('Device updated successfully');
     } else {
       addDevice({
@@ -497,6 +549,65 @@ export const AdminManageDevicesScreen: React.FC<AdminManageDevicesScreenProps> =
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Threshold Section for Sensors (Only when editing) */}
+            {editingDevice && formData.deviceType === 'sensor' && SENSOR_THRESHOLD_CONFIG[formData.subType as string] && (
+              <div className="space-y-4 pt-4 mt-4 border-t border-slate-200">
+                <div className="flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-lg flex items-center justify-center bg-indigo-100">
+                    <Activity className="w-3.5 h-3.5 text-indigo-600" />
+                  </span>
+                  <h3 className="text-sm font-bold text-slate-800">Automation Thresholds</h3>
+                </div>
+
+                <div className="rounded-xl p-3 text-xs bg-green-50 border border-green-200 text-green-700">
+                  💡 {SENSOR_THRESHOLD_CONFIG[formData.subType as string].hint}
+                </div>
+
+                {SENSOR_THRESHOLD_CONFIG[formData.subType as string].hasMin && (
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold">{SENSOR_THRESHOLD_CONFIG[formData.subType as string].minLabel}</Label>
+                    <Input
+                      type="number"
+                      value={minThreshold}
+                      onChange={(e) => setMinThreshold(e.target.value)}
+                      placeholder={SENSOR_THRESHOLD_CONFIG[formData.subType as string].minPlaceholder}
+                      className="rounded-xl"
+                    />
+                  </div>
+                )}
+
+                {SENSOR_THRESHOLD_CONFIG[formData.subType as string].hasMax && (
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold">{SENSOR_THRESHOLD_CONFIG[formData.subType as string].maxLabel}</Label>
+                    <Input
+                      type="number"
+                      value={maxThreshold}
+                      onChange={(e) => setMaxThreshold(e.target.value)}
+                      placeholder={SENSOR_THRESHOLD_CONFIG[formData.subType as string].maxPlaceholder}
+                      className="rounded-xl"
+                    />
+                  </div>
+                )}
+
+                {(minThreshold || maxThreshold) && (
+                  <button
+                    onClick={() => { setMinThreshold(''); setMaxThreshold(''); }}
+                    className="text-xs text-red-500 hover:text-red-600"
+                  >
+                    🗑 Clear thresholds
+                  </button>
+                )}
+
+                <div className="flex items-center justify-between mt-4 p-3 rounded-xl bg-slate-50 border border-slate-200">
+                  <div className="space-y-0.5">
+                    <Label className="text-sm font-semibold text-slate-800">Require motion</Label>
+                    <p className="text-[10px] text-slate-500">Turn off for automatic triggering even without presence (Monitor mode)</p>
+                  </div>
+                  <Switch checked={requireMotion} onCheckedChange={setRequireMotion} />
+                </div>
+              </div>
+            )}
           </div>
 
           <DialogFooter>

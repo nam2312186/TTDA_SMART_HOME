@@ -139,7 +139,8 @@ export const ControlScreen: React.FC<ControlScreenProps> = ({ onNavigate }) => {
               const isExpanded = expandedDeviceId === device.id;
               const isLight = device.subType === 'light';
               const isFan   = device.subType === 'fan';
-              const speedPct = Math.max(0, Math.min(100, Math.round(device.brightness || 0)));
+              // device.brightness từ server là 0-255, UI hiển thị dạng % (0-100)
+              const speedPct = Math.min(100, Math.max(0, Math.round(((device.brightness || 0) / 255) * 100)));
 
               const Icon = isLight ? Lightbulb : Fan;
               const grad = isLight
@@ -247,12 +248,7 @@ export const ControlScreen: React.FC<ControlScreenProps> = ({ onNavigate }) => {
                           ))}
                         </div>
 
-                        {/* Info note for fan */}
-                        {isFan && (
-                          <p className="text-[10px] text-slate-400 text-center">
-                            Slider: 0–100% → server value: 0–255
-                          </p>
-                        )}
+
                       </div>
                     )}
                   </div>
