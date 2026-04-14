@@ -97,26 +97,34 @@ def sync_once() -> bool:
         val = _to_int(telemetry.get(brightness_key))
         actuator = _get_device(light_actuator_id)
         if val is not None and actuator is not None:
-            normalized = _normalize_percent(val)
-            status = normalized > 0
-            if actuator.brightness != normalized or actuator.status != status:
-                actuator.brightness = normalized
-                actuator.status = status
-                actuator.save(update_fields=["brightness", "status"])
-                broadcast_device_status(actuator.device_id, status, actuator.device_name, normalized)
+            actuator_type = (getattr(actuator.type, "name_type", "") or "").lower()
+            if actuator_type not in ["light", "actuator"]:
+                logger.warning("Skip brightness sync: mapped light actuator is type=%s (device=%s)", actuator_type, actuator.device_name)
+            else:
+                normalized = _normalize_percent(val)
+                status = normalized > 0
+                if actuator.brightness != normalized or actuator.status != status:
+                    actuator.brightness = normalized
+                    actuator.status = status
+                    actuator.save(update_fields=["brightness", "status"])
+                    broadcast_device_status(actuator.device_id, status, actuator.device_name, normalized)
 
     # Sync Fan Actuator
     if fan_speed_key in telemetry:
         val = _to_int(telemetry.get(fan_speed_key))
         fan = _get_device(fan_actuator_id)
         if val is not None and fan is not None:
-            normalized = _normalize_percent(val)
-            status = normalized > 0
-            if fan.brightness != normalized or fan.status != status:
-                fan.brightness = normalized
-                fan.status = status
-                fan.save(update_fields=["brightness", "status"])
-                broadcast_device_status(fan.device_id, status, fan.device_name, normalized)
+            fan_type = (getattr(fan.type, "name_type", "") or "").lower()
+            if fan_type != "fan":
+                logger.warning("Skip fan sync: mapped fan actuator is type=%s (device=%s)", fan_type, fan.device_name)
+            else:
+                normalized = _normalize_percent(val)
+                status = normalized > 0
+                if fan.brightness != normalized or fan.status != status:
+                    fan.brightness = normalized
+                    fan.status = status
+                    fan.save(update_fields=["brightness", "status"])
+                    broadcast_device_status(fan.device_id, status, fan.device_name, normalized)
 
     # Sync Sensors
     if temperature_key in telemetry:

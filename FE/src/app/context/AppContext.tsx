@@ -294,8 +294,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const PROTECTION_WINDOW_MS = 10_000;
 
   const syncLatestSensorValues = useCallback(async () => {
-    const latestSensorData = await sensorDataApi.latest().catch(() => []);
-    if (!Array.isArray(latestSensorData) || latestSensorData.length === 0) return;
+    const [latestSensorData, latestDevicesRaw] = await Promise.all([
+      sensorDataApi.latest().catch(() => []),
+      devicesApi.list().catch(() => []),
+    ]);
+    if (!Array.isArray(latestSensorData) && !Array.isArray(latestDevicesRaw)) return;
 
     const latestByDeviceId = new Map<string, { value: number; unit?: string }>();
     (latestSensorData as any[]).forEach((entry) => {
@@ -307,15 +310,43 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     });
 
-    if (latestByDeviceId.size === 0) return;
+    const latestDeviceById = new Map<string, Device>();
+    (latestDevicesRaw as any[]).forEach((raw) => {
+      const mapped = mapDevice(raw);
+      latestDeviceById.set(mapped.id, mapped);
+    });
+
+    if (latestByDeviceId.size === 0 && latestDeviceById.size === 0) return;
 
     setAllDevices((prev) => prev.map((device) => {
       const latest = latestByDeviceId.get(device.id);
-      if (!latest) return device;
+      const serverDevice = latestDeviceById.get(device.id);
+
+      const now = Date.now();
+      const lastAction = lastManualActionsRef.current.get(device.id);
+      const isProtected = lastAction && (now - lastAction.timestamp < PROTECTION_WINDOW_MS);
+
+      if (!latest && !serverDevice) return device;
+
       return {
         ...device,
-        currentValue: latest.value,
-        unit: latest.unit || device.unit,
+        ...(serverDevice
+          ? {
+              name: serverDevice.name,
+              roomId: serverDevice.roomId,
+              type: serverDevice.type,
+              subType: serverDevice.subType,
+              description: serverDevice.description,
+              threshold: serverDevice.threshold,
+              isOn: isProtected ? lastAction.isOn : serverDevice.isOn,
+              brightness:
+                (isProtected && lastAction.brightness !== undefined)
+                  ? lastAction.brightness
+                  : serverDevice.brightness,
+            }
+          : {}),
+        currentValue: latest ? latest.value : device.currentValue,
+        unit: latest ? (latest.unit || device.unit) : device.unit,
         lastUpdated: new Date(),
       };
     }));

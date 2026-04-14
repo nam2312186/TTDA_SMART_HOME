@@ -135,7 +135,7 @@ class CoreIoTClient:
         }
 
     def _find_telemetry_entries(self, payload: Any) -> dict[str, dict[str, Any]]:
-        wanted_keys = set(getattr(settings, "COREIOT_TELEMETRY_KEYS", ["brightness", "temperature", "humidity", "light"]))
+        wanted_keys = set(getattr(settings, "COREIOT_TELEMETRY_KEYS", ["brightness", "fan_speed", "temperature", "humidity", "light"]))
 
         def walk(node: Any) -> dict[str, dict[str, Any]] | None:
             if isinstance(node, dict):
