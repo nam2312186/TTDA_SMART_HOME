@@ -53,7 +53,7 @@ class DeviceSerializer(serializers.ModelSerializer):
         """
         type_name = (obj.type.name_type if obj.type else '').lower()
         # Pure sensor/actuator types
-        if type_name in ('temperature', 'humidity', 'motion', 'sensor'):
+        if type_name in ('temperature', 'humidity', 'sensor'):
             return True
         if type_name in ('fan', 'door', 'actuator'):
             return False
@@ -62,7 +62,6 @@ class DeviceSerializer(serializers.ModelSerializer):
             str(getattr(settings, 'COREIOT_LOCAL_LIGHT_SENSOR_ID', '')).strip(),
             str(getattr(settings, 'COREIOT_LOCAL_TEMPERATURE_SENSOR_ID', '')).strip(),
             str(getattr(settings, 'COREIOT_LOCAL_HUMIDITY_SENSOR_ID', '')).strip(),
-            str(getattr(settings, 'COREIOT_LOCAL_MOTION_SENSOR_ID', '')).strip(),
         ]
         sensor_ids = [sid for sid in sensor_ids if sid]
         if str(obj.device_id) in sensor_ids:
@@ -77,7 +76,6 @@ class DeviceSerializer(serializers.ModelSerializer):
             'threshold_id': obj.threshold.threshold_id,
             'min_value': obj.threshold.min_value,
             'max_value': obj.threshold.max_value,
-            'require_motion': obj.threshold.require_motion,
         }
 
     def create(self, validated_data):
@@ -98,7 +96,6 @@ class DeviceSerializer(serializers.ModelSerializer):
             return
         min_value = payload.get('min_value')
         max_value = payload.get('max_value')
-        require_motion = payload.get('require_motion', True)
         if min_value in (None, '') and max_value in (None, ''):
             old_threshold_id = device.threshold_id
             if old_threshold_id:
@@ -113,7 +110,6 @@ class DeviceSerializer(serializers.ModelSerializer):
             threshold = Threshold.objects.create(
                 min_value=min_value,
                 max_value=max_value,
-                require_motion=require_motion,
             )
             device.threshold = threshold
             device.save(update_fields=['threshold'])
@@ -121,7 +117,6 @@ class DeviceSerializer(serializers.ModelSerializer):
             Threshold.objects.filter(threshold_id=device.threshold_id).update(
                 min_value=min_value,
                 max_value=max_value,
-                require_motion=require_motion,
             )
 
 

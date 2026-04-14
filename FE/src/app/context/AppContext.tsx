@@ -290,10 +290,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const brightnessSyncTimersRef = useRef<Record<string, number>>({});
   const devicesSnapshotRef = useRef<Device[]>([]);
   const roomsSnapshotRef = useRef<Room[]>([]);
-  const autoManagedDevicesRef = useRef<Set<string>>(new Set());
-  // Manual override: khi user tự tay bật/tắt thiết bị, block automation 60s cho thiết bị đó
-  const manualOverrideRef = useRef<Map<string, number>>(new Map());
-  const MANUAL_OVERRIDE_MS = 120_000;  // ✅ Extend to 2 minutes to allow CoreIoT sync buffer
+  const lastManualActionsRef = useRef<Map<string, { isOn: boolean; brightness?: number; timestamp: number }>>(new Map());
+  const PROTECTION_WINDOW_MS = 10_000;
 
   const syncLatestSensorValues = useCallback(async () => {
     const latestSensorData = await sensorDataApi.latest().catch(() => []);
@@ -350,11 +348,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const mappedDevices = (devices as any[]).map((raw) => {
         const mapped = mapDevice(raw);
         const latest = latestByDeviceId.get(mapped.id);
-        if (!latest) return mapped;
+        
+        // 🛡️ Short-term Memory Guard (10s) to prevent snap-back on refocus/switch
+        const now = Date.now();
+        const lastAction = lastManualActionsRef.current.get(mapped.id);
+        const isProtected = lastAction && (now - lastAction.timestamp < PROTECTION_WINDOW_MS);
+
         return {
           ...mapped,
-          currentValue: latest.value,
-          unit: latest.unit || mapped.unit,
+          isOn: isProtected ? lastAction.isOn : mapped.isOn,
+          brightness: (isProtected && lastAction.brightness !== undefined) ? lastAction.brightness : mapped.brightness,
+          currentValue: latest ? latest.value : mapped.currentValue,
+          unit: (latest && latest.unit) ? latest.unit : mapped.unit,
         };
       });
 
@@ -430,9 +435,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const updateDeviceFromEvent = (eventData: any) => {
       if (!eventData?.device_id) return;
 
-      if (eventData.metric === "motion" || eventData.unit === "") {
-          console.log(`📊 Motion event received: device_id=${eventData.device_id}, value=${eventData.value}`);
-      }
+
       
       setAllDevices(prev => prev.map(device => {
         if (device.id === String(eventData.device_id)) {
@@ -451,33 +454,32 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (!eventData?.device_id) return;
       
       const deviceId = String(eventData.device_id);
-      const now = Date.now();
-      const overrideUntil = manualOverrideRef.current.get(deviceId) ?? 0;
-      const isManuallyControlled = now < overrideUntil;
       
-      console.log(`📥 WebSocket event: device_id=${deviceId}, brightness=${eventData.brightness}, isManualOverride=${isManuallyControlled}`);
+      // 🛡️ Short-term Memory Guard (10s)
+      const now = Date.now();
+      const lastAction = lastManualActionsRef.current.get(deviceId);
+      const isProtected = lastAction && (now - lastAction.timestamp < PROTECTION_WINDOW_MS);
+
+      console.log(`📥 WebSocket event: device_id=${deviceId}, brightness=${eventData.brightness}, isProtected=${isProtected}`);
       
       setAllDevices((prev) =>
         prev.map((device) =>
           device.id === deviceId
             ? {
                 ...device,
-                // During manual override, keep local on/off state to avoid snap-back to Off.
-                isOn:
-                  isManuallyControlled
-                    ? device.isOn
+                isOn: isProtected
+                    ? lastAction.isOn
                     : (typeof eventData.status === 'boolean'
                         ? eventData.status
                         : (typeof eventData.status === 'number'
                             ? eventData.status > 0
                             : device.isOn)),
                 brightness:
-                  // ✨ Don't update brightness if:
-                  // 1. User just manually controlled (within manual override period)
-                  // 2. Server didn't send brightness explicitly
-                  (isManuallyControlled || typeof eventData.brightness !== 'number')
-                    ? device.brightness  // Keep current value
-                    : Math.max(0, Math.min(100, Math.round(eventData.brightness))),
+                  isProtected && lastAction.brightness !== undefined
+                    ? lastAction.brightness
+                    : (typeof eventData.brightness !== 'number'
+                        ? device.brightness
+                        : Math.max(0, Math.min(100, Math.round(eventData.brightness)))),
                 lastUpdated: new Date(),
               }
             : device
@@ -519,82 +521,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
           if (eventType === 'sensor_data') {
             updateDeviceFromEvent(payload);
-
-            // ─── Smart Automation Logic ───────────────────────────────────
-            // Run after a brief delay to let state settle
-            window.setTimeout(() => {
-              const snap = devicesSnapshotRef.current;
-
-              // Read latest sensor values
-              const tempSensor   = snap.find(d => d.type === 'sensor' && d.subType === 'temperature');
-              const humSensor    = snap.find(d => d.type === 'sensor' && d.subType === 'humidity');
-              const lightSensor  = snap.find(d => d.type === 'sensor' && d.subType === 'light');
-              const motionSensor = snap.find(d => d.type === 'sensor' && d.subType === 'motion');
-
-              const tempVal  = typeof tempSensor?.currentValue  === 'number' ? tempSensor.currentValue  : null;
-              const humVal   = typeof humSensor?.currentValue   === 'number' ? humSensor.currentValue   : null;
-              const lightVal = typeof lightSensor?.currentValue === 'number' ? lightSensor.currentValue : null;
-              const motion   = typeof motionSensor?.currentValue === 'number' ? motionSensor.currentValue > 0 : false;
-
-              // Thresholds — only use if explicitly set by admin, no defaults
-              const tempMax  = typeof tempSensor?.threshold?.max  === 'number' ? tempSensor.threshold.max  : null;
-              const humMax   = typeof humSensor?.threshold?.max   === 'number' ? humSensor.threshold.max   : null;
-              const lightMin = typeof lightSensor?.threshold?.min === 'number' ? lightSensor.threshold.min : null;
-
-              const fans   = snap.filter(d => d.type === 'actuator' && d.subType === 'fan');
-              const lights = snap.filter(d => d.type === 'actuator' && d.subType === 'light');
-
-              // Only evaluate rule if both value AND threshold are available
-              const tempHigh  = tempMax  !== null && tempVal  !== null && tempVal  >= tempMax;
-              const humHigh   = humMax   !== null && humVal   !== null && humVal   >= humMax;
-              const lightLow  = lightMin !== null && lightVal !== null && lightVal <= lightMin;
-
-              // Fan: (temp threshold exceeded OR hum threshold exceeded) AND (person present if required)
-              // If no threshold set for either → rule is inactive
-              const fanRuleActive = tempMax !== null || humMax !== null;
-              
-              // Fan reqMotion is based on whichever threshold is exceeded (or defaults to temp)
-              const fanReqMotion = tempHigh 
-                ? (tempSensor?.threshold?.requireMotion ?? true)
-                : humHigh 
-                  ? (humSensor?.threshold?.requireMotion ?? true)
-                  : (tempSensor?.threshold?.requireMotion ?? true);
-                  
-              const fanMotionMet = !fanReqMotion || motion;
-              const shouldFanOn   = fanRuleActive && (tempHigh || humHigh) && fanMotionMet;
-              
-              const now = Date.now();
-              fans.forEach(fan => {
-                // Skip nếu user vừa manually control thiết bị này trong 60s
-                const overrideUntil = manualOverrideRef.current.get(fan.id) ?? 0;
-                if (now < overrideUntil) return;
-
-                if (shouldFanOn && !fan.isOn) {
-                  devicesApi.turnOn(Number(fan.id)).catch(() => {});
-                  autoManagedDevicesRef.current.add(fan.id);
-                  setAllDevices(prev => prev.map(d => d.id === fan.id ? { ...d, isOn: true, lastUpdated: new Date() } : d));
-                }
-              });
-
-              // Light: below threshold AND (person present if required)
-              // If no light threshold set → rule is inactive
-              const lightRuleActive = lightMin !== null;
-              const lightReqMotion = lightSensor?.threshold?.requireMotion ?? true;
-              const lightMotionMet = !lightReqMotion || motion;
-              const shouldLightOn   = lightRuleActive && lightLow && lightMotionMet;
-              lights.forEach(light => {
-                // Skip nếu user vừa manually control thiết bị này trong 60s
-                const overrideUntil = manualOverrideRef.current.get(light.id) ?? 0;
-                if (now < overrideUntil) return;
-
-                if (shouldLightOn && !light.isOn) {
-                  devicesApi.turnOn(Number(light.id)).catch(() => {});
-                  autoManagedDevicesRef.current.add(light.id);
-                  setAllDevices(prev => prev.map(d => d.id === light.id ? { ...d, isOn: true, lastUpdated: new Date() } : d));
-                }
-              });
-            }, 200);
-            // ─────────────────────────────────────────────────────────────
 
           } else if (eventType === 'device_status') {
             updateDeviceStatusFromEvent(payload);
@@ -750,9 +676,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [currentUser, allDevices]);
 
   const toggleDevice = async (deviceId: string) => {
-    // Mark manual override — block automation for 60s
-    manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
-    autoManagedDevicesRef.current.delete(deviceId);
+    const device = allDevices.find(d => d.id === deviceId);
+    if (!device) return;
+    
+    // 🛡️ Record Intent for 10s protection
+    const nextOn = !device.isOn;
+    lastManualActionsRef.current.set(deviceId, { isOn: nextOn, brightness: device.brightness, timestamp: Date.now() });
+
     try {
       await devicesApi.toggle(Number(deviceId));
       setAllDevices(prev => prev.map(d =>
@@ -764,7 +694,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const toggleDevices = async (deviceIds: string[]) => {
-    deviceIds.forEach((id) => autoManagedDevicesRef.current.delete(id));
     const allOn = deviceIds.every(id => allDevices.find(d => d.id === id)?.isOn);
     await Promise.all(deviceIds.map(id =>
       allOn ? devicesApi.turnOff(Number(id)) : devicesApi.turnOn(Number(id))
@@ -775,11 +704,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const setBrightness = async (deviceId: string, brightness: number) => {
-    manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
-    autoManagedDevicesRef.current.delete(deviceId);
     const clamped = Math.max(0, Math.min(100, Math.round(brightness)));
-    // ✅ Store and publish 0-100 directly (no conversion)
     const isOn = clamped > 0;
+
+    // 🛡️ Record Intent for 10s protection
+    lastManualActionsRef.current.set(deviceId, { isOn, brightness: clamped, timestamp: Date.now() });
+
     const previousDevice = allDevices.find((d) => d.id === deviceId);
     const previousBrightness = previousDevice?.brightness ?? 0;
     const previousIsOn = previousDevice?.isOn ?? false;
@@ -805,15 +735,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         console.log(`📡 Sending brightness API: deviceId=${deviceId}, brightness=${clamped}%`);
         // ✅ Send 0-100% directly
         await devicesApi.setBrightness(Number(deviceId), clamped);
-        // ✅ Success: extend manual override to prevent websocket from overwriting
-        console.log(`✅ Brightness API success, extending manual override for ${deviceId}`);
-        manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
       } catch (e) {
         console.error('setBrightness error', e);
         const statusCode = (e as any)?.status;
         // Keep optimistic state when CoreIoT is unavailable; don't snap back to Off.
         if (statusCode === 502 || statusCode === 503) {
-          manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
           return;
         }
         setAllDevices((prev) =>
@@ -830,11 +756,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // ✅ Fan speed: 0-100% published to server (no conversion)
   const fanSpeedTimersRef = useRef<Record<string, number>>({});
   const setFanSpeed = async (deviceId: string, speedPercent: number) => {
-    manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
-    autoManagedDevicesRef.current.delete(deviceId);
     const clamped = Math.max(0, Math.min(100, Math.round(speedPercent)));
-    // ✅ Store and publish 0-100 directly
     const isOn = clamped > 0;
+
+    // 🛡️ Record Intent for 10s protection
+    lastManualActionsRef.current.set(deviceId, { isOn, brightness: clamped, timestamp: Date.now() });
+
     const previousDevice = allDevices.find(d => d.id === deviceId);
 
     setAllDevices(prev => prev.map(d =>
@@ -848,14 +775,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       try {
         // ✅ Send only 0-100% to server (no conversion)
         await devicesApi.setFanSpeed(Number(deviceId), clamped);
-        // ✅ Success: extend manual override to prevent websocket from overwriting
-        manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
       } catch (e) {
         console.error('setFanSpeed error', e);
         const statusCode = (e as any)?.status;
         // Keep optimistic state when CoreIoT is unavailable; don't snap back to Off.
         if (statusCode === 502 || statusCode === 503) {
-          manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
           return;
         }
         setAllDevices(prev => prev.map(d =>
@@ -869,9 +793,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Direct on/off – does NOT toggle, just forces state
   const setDeviceOn = async (deviceId: string, on: boolean) => {
-    // Mark manual override — block automation for 60s
-    manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
-    autoManagedDevicesRef.current.delete(deviceId);
+    const device = allDevices.find(d => d.id === deviceId);
+    
+    // 🛡️ Record Intent for 10s protection
+    lastManualActionsRef.current.set(deviceId, { isOn: on, brightness: device?.brightness, timestamp: Date.now() });
+
     try {
       if (on) await devicesApi.turnOn(Number(deviceId));
       else    await devicesApi.turnOff(Number(deviceId));

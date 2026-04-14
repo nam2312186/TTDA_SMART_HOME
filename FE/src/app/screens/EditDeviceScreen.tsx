@@ -3,7 +3,6 @@ import { ChevronLeft, Thermometer, Droplets, Sun, Activity } from 'lucide-react'
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import { Switch } from '../components/ui/switch';
 import { Textarea } from '../components/ui/textarea';
 import {
   Select,
@@ -22,59 +21,16 @@ interface EditDeviceScreenProps {
   onBack: () => void;
 }
 
-// Config ngưỡng theo loại sensor
-const SENSOR_THRESHOLD_CONFIG: Record<string, {
-  hasMin: boolean; hasMax: boolean;
-  minLabel: string; maxLabel: string;
-  minPlaceholder: string; maxPlaceholder: string;
-  hint: string;
-}> = {
-  temperature: {
-    hasMin: false, hasMax: true,
-    minLabel: '', maxLabel: 'Maximum temperature threshold (°C)',
-    minPlaceholder: 'e.g., 30 → fan auto turns on > 30°C', maxPlaceholder: '',
-    hint: 'When temperature ≥ threshold + people present → auto turn on fan.',
-  },
-  humidity: {
-    hasMin: false, hasMax: true,
-    minLabel: '', maxLabel: 'Maximum humidity threshold (%)',
-    minPlaceholder: 'e.g., 70 → fan auto turns on > 70%', maxPlaceholder: '',
-    hint: 'When humidity ≥ threshold + people present → auto turn on fan.',
-  },
-  light: {
-    hasMin: true, hasMax: false,
-    minLabel: 'Minimum light threshold (lux)',
-    maxLabel: '',
-    minPlaceholder: 'e.g., 100 → light auto turns on < 100 lux',
-    maxPlaceholder: '',
-    hint: 'When light ≤ threshold + people present → auto turn on light.',
-  },
-  motion: {
-    hasMin: false, hasMax: false,
-    minLabel: '', maxLabel: '',
-    minPlaceholder: '', maxPlaceholder: '',
-    hint: 'Motion sensor does not need a threshold — value > 0 means motion detected.',
-  },
-};
-
 export const EditDeviceScreen: React.FC<EditDeviceScreenProps> = ({
   device,
   roomName,
   onBack,
 }) => {
-  const { updateDevice, updateDeviceThreshold } = useApp();
+  const { updateDevice } = useApp();
   const [deviceName, setDeviceName] = useState(device.name);
   const [deviceSubType, setDeviceSubType] = useState(device.subType);
   const [description, setDescription] = useState(device.description || '');
-  const [minThreshold, setMinThreshold] = useState(
-    typeof device.threshold?.min === 'number' ? String(device.threshold.min) : ''
-  );
-  const [maxThreshold, setMaxThreshold] = useState(
-    typeof device.threshold?.max === 'number' ? String(device.threshold.max) : ''
-  );
-  const [requireMotion, setRequireMotion] = useState(
-    typeof device.threshold?.requireMotion === 'boolean' ? device.threshold.requireMotion : true
-  );
+
   const [error, setError] = useState('');
 
   const actuatorTypes = [
@@ -91,7 +47,6 @@ export const EditDeviceScreen: React.FC<EditDeviceScreenProps> = ({
 
   const isSensor = device.type === 'sensor';
   const subTypeOptions = isSensor ? sensorTypes : actuatorTypes;
-  const thresholdCfg = isSensor ? SENSOR_THRESHOLD_CONFIG[deviceSubType as string] : null;
 
   const SensorIcons: Record<string, React.ReactNode> = {
     temperature: <Thermometer className="w-4 h-4 text-orange-500" />,
@@ -108,31 +63,11 @@ export const EditDeviceScreen: React.FC<EditDeviceScreenProps> = ({
       return;
     }
 
-    const minValue = minThreshold.trim() === '' ? undefined : Number(minThreshold);
-    const maxValue = maxThreshold.trim() === '' ? undefined : Number(maxThreshold);
-
-    if (minThreshold.trim() !== '' && !Number.isFinite(minValue)) {
-      setError('Min threshold must be a valid number');
-      return;
-    }
-    if (maxThreshold.trim() !== '' && !Number.isFinite(maxValue)) {
-      setError('Max threshold must be a valid number');
-      return;
-    }
-    if (minValue !== undefined && maxValue !== undefined && minValue > maxValue) {
-      setError('Min threshold cannot be greater than max threshold');
-      return;
-    }
-
     updateDevice(device.id, {
       name: deviceName.trim(),
       subType: deviceSubType as any,
       description: description.trim() || undefined,
     });
-
-    if (isSensor && thresholdCfg && (thresholdCfg.hasMin || thresholdCfg.hasMax)) {
-      updateDeviceThreshold(device.id, minValue, maxValue, requireMotion);
-    }
 
     onBack();
   };
@@ -227,85 +162,6 @@ export const EditDeviceScreen: React.FC<EditDeviceScreenProps> = ({
             />
           </div>
         </div>
-
-        {/* Threshold Section — all sensors except motion */}
-        {isSensor && thresholdCfg && (thresholdCfg.hasMin || thresholdCfg.hasMax) && (
-          <div className="rounded-2xl p-5 space-y-4"
-            style={{ background: '#fff', border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)' }}>
-            
-            <div className="flex items-center gap-2">
-              <span className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: '#e0e7ff' }}>
-                <Activity className="w-3.5 h-3.5" style={{ color: '#4f46e5' }} />
-              </span>
-              <h3 className="text-sm font-bold text-slate-800">Automation Thresholds</h3>
-            </div>
-
-            {/* Hint */}
-            <div className="rounded-xl p-3 text-xs"
-              style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#15803d' }}>
-              💡 {thresholdCfg.hint}
-            </div>
-
-            {thresholdCfg.hasMin && (
-              <div className="space-y-1.5">
-                <Label htmlFor="minThreshold" className="text-sm font-semibold text-slate-700">
-                  {thresholdCfg.minLabel}
-                </Label>
-                <Input
-                  id="minThreshold"
-                  type="number"
-                  value={minThreshold}
-                  onChange={(e) => setMinThreshold(e.target.value)}
-                  placeholder={thresholdCfg.minPlaceholder}
-                  className="rounded-xl"
-                />
-              </div>
-            )}
-
-            {thresholdCfg.hasMax && (
-              <div className="space-y-1.5">
-                <Label htmlFor="maxThreshold" className="text-sm font-semibold text-slate-700">
-                  {thresholdCfg.maxLabel}
-                </Label>
-                <Input
-                  id="maxThreshold"
-                  type="number"
-                  value={maxThreshold}
-                  onChange={(e) => setMaxThreshold(e.target.value)}
-                  placeholder={thresholdCfg.maxPlaceholder}
-                  className="rounded-xl"
-                />
-              </div>
-            )}
-
-            {/* Clear button */}
-            {(minThreshold || maxThreshold) && (
-              <button
-                onClick={() => { setMinThreshold(''); setMaxThreshold(''); }}
-                className="text-xs text-red-400 hover:text-red-600 transition-colors"
-              >
-                🗑 Clear thresholds
-              </button>
-            )}
-
-            {/* Require Motion Toggle */}
-            <div className="flex items-center justify-between mt-4 p-3 rounded-xl" style={{ background: '#f8fafc', border: '1px solid #e2e8f0' }}>
-              <div className="space-y-0.5">
-                <Label className="text-sm font-semibold text-slate-800">Require motion</Label>
-                <p className="text-[10px] text-slate-500">Turn off for automatic triggering even without presence (Monitor mode)</p>
-              </div>
-              <Switch checked={requireMotion} onCheckedChange={setRequireMotion} />
-            </div>
-          </div>
-        )}
-
-        {/* Motion info box */}
-        {isSensor && deviceSubType === 'motion' && (
-          <div className="rounded-2xl p-4 text-xs"
-            style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#15803d' }}>
-            🟢 Motion sensor: value <strong>{'>'} 0</strong> = motion detected → auto turn on fan/light based on conditions.
-          </div>
-        )}
 
         {error && (
           <div className="rounded-xl p-3 text-sm text-red-600"

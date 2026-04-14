@@ -6,7 +6,7 @@ class Threshold(models.Model):
     threshold_id = models.AutoField(primary_key=True)
     min_value = models.FloatField(null=True, blank=True)
     max_value = models.FloatField(null=True, blank=True)
-    require_motion = models.BooleanField(default=True)
+
 
     class Meta:
         db_table = 'thresholds'

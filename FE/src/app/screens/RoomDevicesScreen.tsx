@@ -6,8 +6,6 @@ import {
   Fan,
   Thermometer,
   Droplets,
-  Eye,
-  Activity,
   Edit,
   Trash2,
   MoreVertical,
@@ -43,12 +41,10 @@ const getDeviceIcon = (device: Device) => {
       return Thermometer;
     case 'humidity':
       return Droplets;
-    case 'motion':
-      return Activity;
     case 'door':
       return DoorOpen;
     default:
-      return Eye;
+      return Lightbulb;
   }
 };
 
