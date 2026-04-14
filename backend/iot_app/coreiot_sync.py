@@ -121,11 +121,19 @@ def sync_once() -> bool:
     # Motion sensor sync (NEW)
     motion_key = getattr(settings, "COREIOT_MOTION_KEY", "motion")
     motion_sensor_id = getattr(settings, "COREIOT_LOCAL_MOTION_SENSOR_ID", "")
+    
+    logger.info(f"🔍 Checking motion: key={motion_key}, sensor_id={motion_sensor_id}")
+    
     if motion_key in telemetry:
         value = _to_int(telemetry.get(motion_key))
         device = _get_device(motion_sensor_id)
         if value is not None and device is not None:
+            logger.info(f"✅ Motion processed: device={device.device_name}, value={value}")
             _upsert_sensor(device, "motion", float(value), "")
+        else:
+            logger.error(f"❌ Motion sensor device not found: {motion_sensor_id}")
+    else:
+        logger.warning(f"⚠️  Motion key not in telemetry. Available: {list(telemetry.keys())}")
 
     # Fan speed actuator sync (NEW)
     fan_speed_key = getattr(settings, "COREIOT_FAN_SPEED_KEY", "fan_speed")

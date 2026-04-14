@@ -428,6 +428,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const updateDeviceFromEvent = (eventData: any) => {
       if (!eventData?.device_id) return;
+
+      if (eventData.metric === "motion" || eventData.unit === "") {
+          console.log(`📊 Motion event received: device_id=${eventData.device_id}, value=${eventData.value}`);
+      }
       
       setAllDevices(prev => prev.map(device => {
         if (device.id === String(eventData.device_id)) {
