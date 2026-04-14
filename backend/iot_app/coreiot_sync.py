@@ -13,6 +13,7 @@ from monitoring_app.models import SensorData
 from monitoring_app.views import _check_threshold
 
 logger = logging.getLogger("iot_app.coreiot_sync")
+_last_nonzero_telemetry_ts: dict[str, int] = {}
 
 
 def _to_float(value: Any) -> float | None:
@@ -29,6 +30,30 @@ def _to_int(value: Any) -> int | None:
         return None
 
 
+def _normalize_percent(raw_value: Any) -> int:
+    """Normalize values to 0-100, supporting legacy 0-255 telemetry."""
+    try:
+        numeric = float(raw_value)
+    except (TypeError, ValueError):
+        return 0
+
+    numeric = max(0.0, min(255.0, numeric))
+    if numeric <= 100.0:
+        return int(round(numeric))
+    return int(round((numeric / 255.0) * 100.0))
+
+
+def _is_stale(ts_ms: Any, max_age_seconds: int) -> bool:
+    if max_age_seconds <= 0:
+        return False
+    try:
+        ts = int(ts_ms)
+    except (TypeError, ValueError):
+        return False
+    now_ms = int(time.time() * 1000)
+    return (now_ms - ts) > (max_age_seconds * 1000)
+
+
 def _get_device(device_id: str) -> Device | None:
     if not device_id:
         return None
@@ -38,7 +63,7 @@ def _get_device(device_id: str) -> Device | None:
         return None
 
 
-def _upsert_sensor(device: Device, metric: str, value: float, unit: str = "") -> None:
+def _upsert_sensor(device: Device, metric: str, value: float, unit: str) -> None:
     rounded_value = round(float(value), 2)
     latest = SensorData.objects.filter(device=device).first()
     if latest and float(latest.value) == rounded_value and str(latest.unit or "") == str(unit or ""):
@@ -59,9 +84,10 @@ def sync_once() -> bool:
         return False
 
     client = CoreIoTClient()
-    telemetry = client.fetch_latest_telemetry(coreiot_device_id)
-    if not telemetry:
+    telemetry_entries = client.fetch_latest_telemetry_entries(coreiot_device_id)
+    if not telemetry_entries:
         return False
+    telemetry = {key: entry.get("value") for key, entry in telemetry_entries.items()}
 
     brightness_key = getattr(settings, "COREIOT_BRIGHTNESS_KEY", "brightness")
     temperature_key = getattr(settings, "COREIOT_TEMPERATURE_KEY", "temperature")
@@ -72,95 +98,184 @@ def sync_once() -> bool:
     temp_sensor_id = getattr(settings, "COREIOT_LOCAL_TEMPERATURE_SENSOR_ID", "")
     humidity_sensor_id = getattr(settings, "COREIOT_LOCAL_HUMIDITY_SENSOR_ID", "")
     light_sensor_id = getattr(settings, "COREIOT_LOCAL_LIGHT_SENSOR_ID", "")
+    actuator_stale_seconds = int(getattr(settings, "COREIOT_ACTUATOR_STALE_SECONDS", 15))
 
-    # Brightness actuator sync
     if brightness_key in telemetry:
         brightness_raw = _to_int(telemetry.get(brightness_key))
+        brightness_ts = telemetry_entries.get(brightness_key, {}).get("ts")
         actuator = _get_device(light_actuator_id)
         if brightness_raw is not None and actuator is not None:
-            # ✅ CoreIoT sends 0-255, convert to 0-100 for DB/FE
-            brightness_raw = max(0, min(255, brightness_raw))
-            brightness_normalized = round((brightness_raw / 255) * 100) if brightness_raw > 0 else 0
-            status = brightness_normalized > 0
-            
-            logger.info(f'🔄 CoreIoT sync brightness: {brightness_raw}/255 → {brightness_normalized}%')
-            
-            if actuator.brightness != brightness_normalized or actuator.status != status:
-                actuator.brightness = brightness_normalized
+            if _is_stale(brightness_ts, actuator_stale_seconds):
+                logger.warning(
+                    "⚠️ Skip stale brightness telemetry: device=%s ts=%s raw=%s",
+                    actuator.device_name,
+                    brightness_ts,
+                    brightness_raw,
+                )
+                brightness_raw = None
+
+        if brightness_raw is not None and actuator is not None and brightness_ts is None and actuator.status and _normalize_percent(brightness_raw) == 0:
+            logger.warning(
+                "⚠️ Skip untrusted zero brightness telemetry without timestamp: device=%s raw=%s",
+                actuator.device_name,
+                brightness_raw,
+            )
+            brightness_raw = None
+
+        if brightness_raw is not None and actuator is not None:
+            normalized_brightness = _normalize_percent(brightness_raw)
+            status = normalized_brightness > 0
+
+            if status and brightness_ts is not None:
+                try:
+                    _last_nonzero_telemetry_ts[f"light:{actuator.device_id}"] = int(brightness_ts)
+                except (TypeError, ValueError):
+                    pass
+
+            if (not status) and actuator.status:
+                marker_key = f"light:{actuator.device_id}"
+                if marker_key not in _last_nonzero_telemetry_ts:
+                    logger.warning(
+                        "⚠️ Skip OFF sync without prior non-zero telemetry: device=%s ts=%s raw=%s",
+                        actuator.device_name,
+                        brightness_ts,
+                        brightness_raw,
+                    )
+                    brightness_raw = None
+
+        if brightness_raw is not None and actuator is not None:
+            normalized_brightness = _normalize_percent(brightness_raw)
+            status = normalized_brightness > 0
+
+            logger.info(
+                "🔄 CoreIoT sync brightness: raw=%s ts=%s -> normalized=%s%%",
+                brightness_raw,
+                brightness_ts,
+                normalized_brightness,
+            )
+
+            if actuator.brightness != normalized_brightness or actuator.status != status:
+                actuator.brightness = normalized_brightness
                 actuator.status = status
                 actuator.save(update_fields=["brightness", "status"])
                 create_activity_log(
                     device=actuator,
                     action="coreiot_brightness_synced",
-                    details=f"CoreIoT brightness -> {brightness_normalized}%",
+                    details=f"CoreIoT brightness -> {normalized_brightness}%",
                 )
-                # ✅ Broadcast normalized 0-100 value
-                broadcast_device_status(actuator.device_id, status, actuator.device_name, brightness_normalized)
+                broadcast_device_status(
+                    actuator.device_id,
+                    status,
+                    actuator.device_name,
+                    normalized_brightness,
+                )
 
-    # Temperature sensor sync
     if temperature_key in telemetry:
         value = _to_float(telemetry.get(temperature_key))
         device = _get_device(temp_sensor_id)
         if value is not None and device is not None:
             _upsert_sensor(device, "temperature", value, "C")
 
-    # Humidity sensor sync
     if humidity_key in telemetry:
         value = _to_float(telemetry.get(humidity_key))
         device = _get_device(humidity_sensor_id)
         if value is not None and device is not None:
             _upsert_sensor(device, "humidity", value, "%")
 
-    # Light sensor sync
     if light_key in telemetry:
         value = _to_float(telemetry.get(light_key))
         device = _get_device(light_sensor_id)
         if value is not None and device is not None:
             _upsert_sensor(device, "light", value, "lux")
 
-    # Motion sensor sync (NEW)
     motion_key = getattr(settings, "COREIOT_MOTION_KEY", "motion")
     motion_sensor_id = getattr(settings, "COREIOT_LOCAL_MOTION_SENSOR_ID", "")
-    
-    logger.info(f"🔍 Checking motion: key={motion_key}, sensor_id={motion_sensor_id}")
-    
+
+    logger.info("🔍 Checking motion: key=%s, sensor_id=%s", motion_key, motion_sensor_id)
+
     if motion_key in telemetry:
         value = _to_int(telemetry.get(motion_key))
         device = _get_device(motion_sensor_id)
         if value is not None and device is not None:
-            logger.info(f"✅ Motion processed: device={device.device_name}, value={value}")
+            logger.info("✅ Motion processed: device=%s, value=%s", device.device_name, value)
             _upsert_sensor(device, "motion", float(value), "")
         else:
-            logger.error(f"❌ Motion sensor device not found: {motion_sensor_id}")
+            logger.error("❌ Motion sensor device not found: %s", motion_sensor_id)
     else:
-        logger.warning(f"⚠️  Motion key not in telemetry. Available: {list(telemetry.keys())}")
+        logger.warning("⚠️ Motion key not in telemetry. Available: %s", list(telemetry.keys()))
 
-    # Fan speed actuator sync (NEW)
     fan_speed_key = getattr(settings, "COREIOT_FAN_SPEED_KEY", "fan_speed")
     fan_actuator_id = getattr(settings, "COREIOT_LOCAL_FAN_ACTUATOR_ID", "")
     if fan_speed_key in telemetry:
         fan_speed_raw = _to_int(telemetry.get(fan_speed_key))
+        fan_speed_ts = telemetry_entries.get(fan_speed_key, {}).get("ts")
         fan_device = _get_device(fan_actuator_id)
         if fan_speed_raw is not None and fan_device is not None:
-            # ✅ CoreIoT sends 0-255, convert to 0-100 for DB/FE
-            fan_speed_raw = max(0, min(255, fan_speed_raw))
-            fan_speed_normalized = round((fan_speed_raw / 255) * 100) if fan_speed_raw > 0 else 0
-            status = fan_speed_normalized > 0
-            
-            logger.info(f'🔄 CoreIoT sync fan speed: {fan_speed_raw}/255 → {fan_speed_normalized}%')
-            
-            if fan_device.brightness != fan_speed_normalized or fan_device.status != status:
-                fan_device.brightness = fan_speed_normalized
+            if _is_stale(fan_speed_ts, actuator_stale_seconds):
+                logger.warning(
+                    "⚠️ Skip stale fan telemetry: device=%s ts=%s raw=%s",
+                    fan_device.device_name,
+                    fan_speed_ts,
+                    fan_speed_raw,
+                )
+                fan_speed_raw = None
+
+        if fan_speed_raw is not None and fan_device is not None and fan_speed_ts is None and fan_device.status and _normalize_percent(fan_speed_raw) == 0:
+            logger.warning(
+                "⚠️ Skip untrusted zero fan telemetry without timestamp: device=%s raw=%s",
+                fan_device.device_name,
+                fan_speed_raw,
+            )
+            fan_speed_raw = None
+
+        if fan_speed_raw is not None and fan_device is not None:
+            normalized_fan_speed = _normalize_percent(fan_speed_raw)
+            status = normalized_fan_speed > 0
+
+            if status and fan_speed_ts is not None:
+                try:
+                    _last_nonzero_telemetry_ts[f"fan:{fan_device.device_id}"] = int(fan_speed_ts)
+                except (TypeError, ValueError):
+                    pass
+
+            if (not status) and fan_device.status:
+                marker_key = f"fan:{fan_device.device_id}"
+                if marker_key not in _last_nonzero_telemetry_ts:
+                    logger.warning(
+                        "⚠️ Skip OFF fan sync without prior non-zero telemetry: device=%s ts=%s raw=%s",
+                        fan_device.device_name,
+                        fan_speed_ts,
+                        fan_speed_raw,
+                    )
+                    fan_speed_raw = None
+
+        if fan_speed_raw is not None and fan_device is not None:
+            normalized_fan_speed = _normalize_percent(fan_speed_raw)
+            status = normalized_fan_speed > 0
+
+            logger.info(
+                "🔄 CoreIoT sync fan speed: raw=%s ts=%s -> normalized=%s%%",
+                fan_speed_raw,
+                fan_speed_ts,
+                normalized_fan_speed,
+            )
+
+            if fan_device.brightness != normalized_fan_speed or fan_device.status != status:
+                fan_device.brightness = normalized_fan_speed
                 fan_device.status = status
                 fan_device.save(update_fields=["brightness", "status"])
-                
+
                 create_activity_log(
                     device=fan_device,
                     action="coreiot_fan_speed_synced",
-                    details=f"CoreIoT fan speed synced -> {fan_speed_normalized}%",
+                    details=f"CoreIoT fan speed synced -> {normalized_fan_speed}%",
                 )
-                # ✅ Broadcast normalized 0-100 value
-                broadcast_device_status(fan_device.device_id, status, fan_device.device_name, fan_speed_normalized)
+                broadcast_device_status(
+                    fan_device.device_id,
+                    status,
+                    fan_device.device_name,
+                    normalized_fan_speed,
+                )
 
     return True
 

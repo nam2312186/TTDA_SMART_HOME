@@ -107,24 +107,45 @@ class CoreIoTClient:
         logger.warning("CoreIoT login failed: cannot extract token")
         return False
     
-    def _find_telemetry_dict(self, payload: Any) -> dict[str, Any]:
+    def _extract_latest_telemetry_entry(self, raw: Any) -> dict[str, Any]:
+        """Normalize telemetry node into {'value': ..., 'ts': ...}."""
+        if isinstance(raw, list) and raw:
+            dict_items = [item for item in raw if isinstance(item, dict)]
+            if dict_items:
+                # Prefer entry with newest timestamp; fallback to last element.
+                latest = max(dict_items, key=lambda item: item.get("ts") or 0)
+                return {
+                    "value": latest.get("value"),
+                    "ts": latest.get("ts"),
+                }
+            return {
+                "value": raw[-1],
+                "ts": None,
+            }
+
+        if isinstance(raw, dict):
+            return {
+                "value": raw.get("value", raw),
+                "ts": raw.get("ts"),
+            }
+
+        return {
+            "value": raw,
+            "ts": None,
+        }
+
+    def _find_telemetry_entries(self, payload: Any) -> dict[str, dict[str, Any]]:
         wanted_keys = set(getattr(settings, "COREIOT_TELEMETRY_KEYS", ["brightness", "temperature", "humidity", "light"]))
 
-        def walk(node: Any) -> dict[str, Any] | None:
+        def walk(node: Any) -> dict[str, dict[str, Any]] | None:
             if isinstance(node, dict):
-                # If this dictionary contains telemetry keys we care about, flatten list values.
+                # If this dictionary contains telemetry keys we care about, normalize values with timestamps.
                 if any(k in node for k in wanted_keys):
-                    flattened = {}
+                    extracted: dict[str, dict[str, Any]] = {}
                     for k, v in node.items():
-                        if k in wanted_keys and isinstance(v, list) and len(v) > 0:
-                            first_item = v[0]
-                            if isinstance(first_item, dict):
-                                flattened[k] = first_item.get("value")
-                            else:
-                                flattened[k] = first_item
-                        else:
-                            flattened[k] = v
-                    return flattened
+                        if k in wanted_keys:
+                            extracted[k] = self._extract_latest_telemetry_entry(v)
+                    return extracted
                 for value in node.values():
                     found = walk(value)
                     if found is not None:
@@ -139,7 +160,7 @@ class CoreIoTClient:
         found = walk(payload)
         return found or {}
 
-    def fetch_latest_telemetry(self, coreiot_device_id: str) -> dict[str, Any]:
+    def fetch_latest_telemetry_entries(self, coreiot_device_id: str) -> dict[str, dict[str, Any]]:
         template = getattr(settings, "COREIOT_TELEMETRY_URL_TEMPLATE", "").strip()
         if not template or not coreiot_device_id:
             return {}
@@ -148,7 +169,11 @@ class CoreIoTClient:
         path = template.replace("{device_id}", encoded_device_id)
         url = _join_url(self.base_url, path)
         result = self._request("GET", url)
-        return self._find_telemetry_dict(result)
+        return self._find_telemetry_entries(result)
+
+    def fetch_latest_telemetry(self, coreiot_device_id: str) -> dict[str, Any]:
+        entries = self.fetch_latest_telemetry_entries(coreiot_device_id)
+        return {key: entry.get("value") for key, entry in entries.items()}
 
     def set_brightness(self, coreiot_device_id: str, brightness: int) -> bool:
         template = getattr(settings, "COREIOT_SETSTATE_URL_TEMPLATE", "").strip()
@@ -160,7 +185,7 @@ class CoreIoTClient:
         path = template.replace("{device_id}", encoded_device_id)
         url = _join_url(self.base_url, path)
 
-        value = max(0, min(255, int(brightness)))
+        value = max(0, min(100, int(brightness)))
         mode = getattr(settings, "COREIOT_SETSTATE_MODE", "rpc").strip().lower()
         brightness_key = getattr(settings, "COREIOT_BRIGHTNESS_KEY", "brightness")
 
@@ -179,7 +204,7 @@ class CoreIoTClient:
         return result is not None
 
     def set_value(self, coreiot_device_id: str, value: int) -> bool:
-        """Fan control - RPC method: setValue (0-255 PWM)"""
+        """Fan control - RPC method: setValue (0-100 percent)."""
         template = getattr(settings, "COREIOT_SETSTATE_URL_TEMPLATE", "").strip()
         if not template or not coreiot_device_id:
             return False
@@ -188,8 +213,7 @@ class CoreIoTClient:
         path = template.replace("{device_id}", encoded_device_id)
         url = _join_url(self.base_url, path)
 
-        # Giữ nguyên 0-255, không clamp
-        value = max(0, min(255, int(value)))
+        value = max(0, min(100, int(value)))
         mode = getattr(settings, "COREIOT_SETSTATE_MODE", "rpc").strip().lower()
 
         if mode == "direct":

@@ -290,6 +290,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const brightnessSyncTimersRef = useRef<Record<string, number>>({});
   const devicesSnapshotRef = useRef<Device[]>([]);
   const roomsSnapshotRef = useRef<Room[]>([]);
+  const autoManagedDevicesRef = useRef<Set<string>>(new Set());
   // Manual override: khi user tự tay bật/tắt thiết bị, block automation 60s cho thiết bị đó
   const manualOverrideRef = useRef<Map<string, number>>(new Map());
   const MANUAL_OVERRIDE_MS = 120_000;  // ✅ Extend to 2 minutes to allow CoreIoT sync buffer
@@ -461,14 +462,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           device.id === deviceId
             ? {
                 ...device,
-                isOn: Boolean(eventData.status),
+                // During manual override, keep local on/off state to avoid snap-back to Off.
+                isOn:
+                  isManuallyControlled
+                    ? device.isOn
+                    : (typeof eventData.status === 'boolean'
+                        ? eventData.status
+                        : (typeof eventData.status === 'number'
+                            ? eventData.status > 0
+                            : device.isOn)),
                 brightness:
                   // ✨ Don't update brightness if:
                   // 1. User just manually controlled (within manual override period)
                   // 2. Server didn't send brightness explicitly
                   (isManuallyControlled || typeof eventData.brightness !== 'number')
                     ? device.brightness  // Keep current value
-                    : eventData.brightness,  // Update only if server explicitly sent it
+                    : Math.max(0, Math.min(100, Math.round(eventData.brightness))),
                 lastUpdated: new Date(),
               }
             : device
@@ -562,10 +571,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
                 if (shouldFanOn && !fan.isOn) {
                   devicesApi.turnOn(Number(fan.id)).catch(() => {});
+                  autoManagedDevicesRef.current.add(fan.id);
                   setAllDevices(prev => prev.map(d => d.id === fan.id ? { ...d, isOn: true, lastUpdated: new Date() } : d));
-                } else if (fanRuleActive && !shouldFanOn && fan.isOn) {
-                  devicesApi.turnOff(Number(fan.id)).catch(() => {});
-                  setAllDevices(prev => prev.map(d => d.id === fan.id ? { ...d, isOn: false, lastUpdated: new Date() } : d));
                 }
               });
 
@@ -582,10 +589,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
                 if (shouldLightOn && !light.isOn) {
                   devicesApi.turnOn(Number(light.id)).catch(() => {});
+                  autoManagedDevicesRef.current.add(light.id);
                   setAllDevices(prev => prev.map(d => d.id === light.id ? { ...d, isOn: true, lastUpdated: new Date() } : d));
-                } else if (lightRuleActive && !shouldLightOn && light.isOn) {
-                  devicesApi.turnOff(Number(light.id)).catch(() => {});
-                  setAllDevices(prev => prev.map(d => d.id === light.id ? { ...d, isOn: false, lastUpdated: new Date() } : d));
                 }
               });
             }, 200);
@@ -747,6 +752,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const toggleDevice = async (deviceId: string) => {
     // Mark manual override — block automation for 60s
     manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
+    autoManagedDevicesRef.current.delete(deviceId);
     try {
       await devicesApi.toggle(Number(deviceId));
       setAllDevices(prev => prev.map(d =>
@@ -758,6 +764,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const toggleDevices = async (deviceIds: string[]) => {
+    deviceIds.forEach((id) => autoManagedDevicesRef.current.delete(id));
     const allOn = deviceIds.every(id => allDevices.find(d => d.id === id)?.isOn);
     await Promise.all(deviceIds.map(id =>
       allOn ? devicesApi.turnOff(Number(id)) : devicesApi.turnOn(Number(id))
@@ -769,6 +776,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const setBrightness = async (deviceId: string, brightness: number) => {
     manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
+    autoManagedDevicesRef.current.delete(deviceId);
     const clamped = Math.max(0, Math.min(100, Math.round(brightness)));
     // ✅ Store and publish 0-100 directly (no conversion)
     const isOn = clamped > 0;
@@ -802,6 +810,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
       } catch (e) {
         console.error('setBrightness error', e);
+        const statusCode = (e as any)?.status;
+        // Keep optimistic state when CoreIoT is unavailable; don't snap back to Off.
+        if (statusCode === 502 || statusCode === 503) {
+          manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
+          return;
+        }
         setAllDevices((prev) =>
           prev.map((d) =>
             d.id === deviceId
@@ -817,6 +831,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const fanSpeedTimersRef = useRef<Record<string, number>>({});
   const setFanSpeed = async (deviceId: string, speedPercent: number) => {
     manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
+    autoManagedDevicesRef.current.delete(deviceId);
     const clamped = Math.max(0, Math.min(100, Math.round(speedPercent)));
     // ✅ Store and publish 0-100 directly
     const isOn = clamped > 0;
@@ -837,6 +852,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
       } catch (e) {
         console.error('setFanSpeed error', e);
+        const statusCode = (e as any)?.status;
+        // Keep optimistic state when CoreIoT is unavailable; don't snap back to Off.
+        if (statusCode === 502 || statusCode === 503) {
+          manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
+          return;
+        }
         setAllDevices(prev => prev.map(d =>
           d.id === deviceId
             ? { ...d, brightness: previousDevice?.brightness ?? 0, isOn: previousDevice?.isOn ?? false, lastUpdated: new Date() }
@@ -850,6 +871,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const setDeviceOn = async (deviceId: string, on: boolean) => {
     // Mark manual override — block automation for 60s
     manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
+    autoManagedDevicesRef.current.delete(deviceId);
     try {
       if (on) await devicesApi.turnOn(Number(deviceId));
       else    await devicesApi.turnOff(Number(deviceId));

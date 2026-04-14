@@ -94,8 +94,34 @@ class RoomDeviceListView(APIView):
 class DeviceTurnOnView(APIView):
     def post(self, request, pk):
         device = get_object_or_404(Device, pk=pk)
+
+        device_type = getattr(device.type, 'name_type', '')
+        if device_type in ('light', 'fan') and getattr(settings, 'COREIOT_ENABLED', False):
+            coreiot_device_id = getattr(settings, 'COREIOT_DEVICE_ID', '').strip()
+            if not coreiot_device_id:
+                return Response(
+                    {'error': 'Missing COREIOT_DEVICE_ID. Cannot sync turn on to CoreIoT.'},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+
+            publish_value = int(device.brightness) if int(device.brightness or 0) > 0 else 100
+            client = CoreIoTClient()
+            try:
+                ok = client.set_brightness(coreiot_device_id, publish_value) if device_type == 'light' else client.set_value(coreiot_device_id, publish_value)
+            except Exception as e:
+                logger.error(f'CoreIoT turn on sync error: {e}')
+                ok = False
+
+            if not ok:
+                return Response(
+                    {'error': 'Failed to sync turn on to CoreIoT. Local state was not updated.'},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+
+            device.brightness = publish_value
+
         device.status = True
-        device.save(update_fields=['status'])
+        device.save(update_fields=['status', 'brightness'])
         create_activity_log(
             request=request,
             device=device,
@@ -110,6 +136,29 @@ class DeviceTurnOnView(APIView):
 class DeviceTurnOffView(APIView):
     def post(self, request, pk):
         device = get_object_or_404(Device, pk=pk)
+
+        device_type = getattr(device.type, 'name_type', '')
+        if device_type in ('light', 'fan') and getattr(settings, 'COREIOT_ENABLED', False):
+            coreiot_device_id = getattr(settings, 'COREIOT_DEVICE_ID', '').strip()
+            if not coreiot_device_id:
+                return Response(
+                    {'error': 'Missing COREIOT_DEVICE_ID. Cannot sync turn off to CoreIoT.'},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+
+            client = CoreIoTClient()
+            try:
+                ok = client.set_brightness(coreiot_device_id, 0) if device_type == 'light' else client.set_value(coreiot_device_id, 0)
+            except Exception as e:
+                logger.error(f'CoreIoT turn off sync error: {e}')
+                ok = False
+
+            if not ok:
+                return Response(
+                    {'error': 'Failed to sync turn off to CoreIoT. Local state was not updated.'},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+
         device.status = False
         device.save(update_fields=['status'])
         create_activity_log(
@@ -126,8 +175,39 @@ class DeviceTurnOffView(APIView):
 class DeviceToggleView(APIView):
     def post(self, request, pk):
         device = get_object_or_404(Device, pk=pk)
-        device.status = not device.status
-        device.save(update_fields=['status'])
+
+        next_status = not device.status
+        device_type = getattr(device.type, 'name_type', '')
+        if device_type in ('light', 'fan') and getattr(settings, 'COREIOT_ENABLED', False):
+            coreiot_device_id = getattr(settings, 'COREIOT_DEVICE_ID', '').strip()
+            if not coreiot_device_id:
+                return Response(
+                    {'error': 'Missing COREIOT_DEVICE_ID. Cannot sync toggle to CoreIoT.'},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+
+            publish_value = 0
+            if next_status:
+                publish_value = int(device.brightness) if int(device.brightness or 0) > 0 else 100
+
+            client = CoreIoTClient()
+            try:
+                ok = client.set_brightness(coreiot_device_id, publish_value) if device_type == 'light' else client.set_value(coreiot_device_id, publish_value)
+            except Exception as e:
+                logger.error(f'CoreIoT toggle sync error: {e}')
+                ok = False
+
+            if not ok:
+                return Response(
+                    {'error': 'Failed to sync toggle to CoreIoT. Local state was not updated.'},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+
+            if next_status:
+                device.brightness = publish_value
+
+        device.status = next_status
+        device.save(update_fields=['status', 'brightness'])
         action = 'device_turned_on' if device.status else 'device_turned_off'
         create_activity_log(
             request=request,
@@ -163,8 +243,8 @@ class DeviceBrightnessView(APIView):
         except (ValueError, TypeError):
             return Response({'error': 'Invalid brightness value'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ✅ Convert 0-100% (FE/DB) to 0-255 (Hardware PWM payload)
-        hw_value = round((brightness / 100) * 255)
+        # Publish 0-100 directly so firmware can map to PWM itself.
+        publish_value = brightness
 
         # Brightness control must be synchronized via CoreIoT, not local-only command flow.
         if not getattr(settings, 'COREIOT_ENABLED', False):
@@ -181,8 +261,8 @@ class DeviceBrightnessView(APIView):
             )
 
         try:
-            logger.info(f'⚡ Publishing brightness to CoreIoT: device_id={coreiot_device_id}, hw_value={hw_value} (from {brightness}%)')
-            ok = CoreIoTClient().set_brightness(coreiot_device_id, hw_value)
+            logger.info(f'⚡ Publishing brightness to CoreIoT: device_id={coreiot_device_id}, value={publish_value}%')
+            ok = CoreIoTClient().set_brightness(coreiot_device_id, publish_value)
         except Exception as e:
             logger.error(f'CoreIoT setState error: {e}')
             ok = False
@@ -194,8 +274,8 @@ class DeviceBrightnessView(APIView):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
         
-        is_on = brightness > 0
-        device.brightness = brightness
+        is_on = publish_value > 0
+        device.brightness = publish_value
         device.status = is_on
         device.save(update_fields=['brightness', 'status'])
         
@@ -210,7 +290,7 @@ class DeviceBrightnessView(APIView):
         
         return Response({
             'message': f'{device.device_name} brightness set to {brightness}%',
-            'brightness': brightness,
+            'brightness': publish_value,
             'status': is_on,
         })
 
@@ -238,8 +318,8 @@ class DeviceFanSpeedView(APIView):
         except (ValueError, TypeError):
             return Response({'error': 'Invalid fan speed value'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ✅ Convert 0-100% (FE/DB) to 0-255 (Hardware PWM payload)
-        hw_speed = round((speed / 100) * 255)
+        # Publish 0-100 directly so firmware can map to PWM itself.
+        publish_value = speed
 
         if not getattr(settings, 'COREIOT_ENABLED', False):
             return Response(
@@ -255,8 +335,8 @@ class DeviceFanSpeedView(APIView):
             )
 
         try:
-            logger.info(f'⚡ Publishing fan speed to CoreIoT: device_id={coreiot_fan_device_id}, hw_value={hw_speed} (from {speed}%)')
-            ok = CoreIoTClient().set_value(coreiot_fan_device_id, hw_speed)
+            logger.info(f'⚡ Publishing fan speed to CoreIoT: device_id={coreiot_fan_device_id}, value={publish_value}%')
+            ok = CoreIoTClient().set_value(coreiot_fan_device_id, publish_value)
         except Exception as e:
             logger.error(f'CoreIoT setValue error: {e}')
             ok = False
@@ -268,8 +348,8 @@ class DeviceFanSpeedView(APIView):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
         
-        is_on = speed > 0
-        device.brightness = speed  # Store 0-100 directly
+        is_on = publish_value > 0
+        device.brightness = publish_value  # Store 0-100 directly
         device.status = is_on
         device.save(update_fields=['brightness', 'status'])
         
@@ -284,7 +364,7 @@ class DeviceFanSpeedView(APIView):
         
         return Response({
             'message': f'{device.device_name} fan speed set to {speed}%',
-            'speed': speed,
+            'speed': publish_value,
             'status': is_on,
         })
 
