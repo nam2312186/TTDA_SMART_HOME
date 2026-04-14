@@ -102,7 +102,8 @@ class DeviceTurnOnView(APIView):
             action='device_turned_on',
             details=f'Turned on "{device.device_name}"',
         )
-        broadcast_device_status(device.device_id, True, device.device_name)
+        # ✅ Always include current brightness to prevent FE from resetting it
+        broadcast_device_status(device.device_id, True, device.device_name, device.brightness)
         return Response({'message': f'{device.device_name} turned on', 'status': True})
 
 
@@ -117,7 +118,8 @@ class DeviceTurnOffView(APIView):
             action='device_turned_off',
             details=f'Turned off "{device.device_name}"',
         )
-        broadcast_device_status(device.device_id, False, device.device_name)
+        # ✅ Always include current brightness to prevent FE from resetting it
+        broadcast_device_status(device.device_id, False, device.device_name, device.brightness)
         return Response({'message': f'{device.device_name} turned off', 'status': False})
 
 
@@ -133,7 +135,8 @@ class DeviceToggleView(APIView):
             action=action,
             details=f'Toggled "{device.device_name}" -> {device.status}',
         )
-        broadcast_device_status(device.device_id, device.status, device.device_name)
+        # ✅ Always include current brightness to prevent FE from resetting it
+        broadcast_device_status(device.device_id, device.status, device.device_name, device.brightness)
         return Response({'message': f'{device.device_name} toggled', 'status': device.status})
 
 
@@ -150,9 +153,18 @@ class DeviceBrightnessView(APIView):
         brightness = request.data.get('brightness', 0)
         
         try:
-            brightness = max(0, min(255, int(brightness)))
+            brightness = int(brightness)
+            # ✅ Validate: only accept 0-100%
+            if brightness < 0 or brightness > 100:
+                return Response(
+                    {'error': f'Brightness must be 0-100%, got {brightness}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
         except (ValueError, TypeError):
             return Response({'error': 'Invalid brightness value'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # ✅ Publish directly 0-100 without conversion
+        value_to_publish = brightness
 
         # Brightness control must be synchronized via CoreIoT, not local-only command flow.
         if not getattr(settings, 'COREIOT_ENABLED', False):
@@ -169,7 +181,8 @@ class DeviceBrightnessView(APIView):
             )
 
         try:
-            ok = CoreIoTClient().set_brightness(coreiot_device_id, brightness)
+            logger.info(f'⚡ Publishing brightness to CoreIoT: device_id={coreiot_device_id}, brightness={value_to_publish}')
+            ok = CoreIoTClient().set_brightness(coreiot_device_id, value_to_publish)
         except Exception as e:
             logger.error(f'CoreIoT setState error: {e}')
             ok = False
@@ -181,8 +194,8 @@ class DeviceBrightnessView(APIView):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
         
-        is_on = brightness > 0
-        device.brightness = brightness
+        is_on = value_to_publish > 0
+        device.brightness = value_to_publish
         device.status = is_on
         device.save(update_fields=['brightness', 'status'])
         
@@ -190,14 +203,14 @@ class DeviceBrightnessView(APIView):
             request=request,
             device=device,
             action='device_brightness_set',
-            details=f'Device "{device.device_name}" brightness set to {brightness}/255',
+            details=f'Device "{device.device_name}" brightness set to {brightness}%',
         )
 
-        broadcast_device_status(device.device_id, is_on, device.device_name, brightness)
+        broadcast_device_status(device.device_id, is_on, device.device_name, value_to_publish)
         
         return Response({
-            'message': f'{device.device_name} brightness set to {brightness}/255',
-            'brightness': brightness,
+            'message': f'{device.device_name} brightness set to {brightness}%',
+            'brightness': value_to_publish,
             'status': is_on,
         })
 
@@ -215,9 +228,18 @@ class DeviceFanSpeedView(APIView):
         speed = request.data.get('speed', 0)
         
         try:
-            speed = max(0, min(255, int(speed)))
+            speed = int(speed)
+            # ✅ Validate: only accept 0-100%
+            if speed < 0 or speed > 100:
+                return Response(
+                    {'error': f'Fan speed must be 0-100%, got {speed}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
         except (ValueError, TypeError):
             return Response({'error': 'Invalid fan speed value'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # ✅ Publish directly 0-100 without conversion
+        value_to_publish = speed
 
         if not getattr(settings, 'COREIOT_ENABLED', False):
             return Response(
@@ -233,7 +255,8 @@ class DeviceFanSpeedView(APIView):
             )
 
         try:
-            ok = CoreIoTClient().set_value(coreiot_fan_device_id, speed)
+            logger.info(f'⚡ Publishing fan speed to CoreIoT: device_id={coreiot_fan_device_id}, speed={value_to_publish}')
+            ok = CoreIoTClient().set_value(coreiot_fan_device_id, value_to_publish)
         except Exception as e:
             logger.error(f'CoreIoT setValue error: {e}')
             ok = False
@@ -245,8 +268,8 @@ class DeviceFanSpeedView(APIView):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
         
-        is_on = speed > 0
-        device.brightness = speed  # Dùng field brightness cho speed
+        is_on = value_to_publish > 0
+        device.brightness = value_to_publish  # Store 0-100 directly
         device.status = is_on
         device.save(update_fields=['brightness', 'status'])
         
@@ -254,14 +277,14 @@ class DeviceFanSpeedView(APIView):
             request=request,
             device=device,
             action='device_fan_speed_set',
-            details=f'Device "{device.device_name}" fan speed set to {speed}/255',
+            details=f'Device "{device.device_name}" fan speed set to {speed}%',
         )
 
-        broadcast_device_status(device.device_id, is_on, device.device_name, speed)
+        broadcast_device_status(device.device_id, is_on, device.device_name, value_to_publish)
         
         return Response({
-            'message': f'{device.device_name} fan speed set to {speed}/255',
-            'speed': speed,
+            'message': f'{device.device_name} fan speed set to {speed}%',
+            'speed': value_to_publish,
             'status': is_on,
         })
 

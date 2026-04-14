@@ -94,10 +94,10 @@ export const devicesApi = {
   turnOff: (id: number) => request(`/devices/${id}/off/`, { method: 'POST' }),
   toggle: (id: number) => request(`/devices/${id}/toggle/`, { method: 'POST' }),
   setBrightness: (id: number, brightness: number) => request(`/devices/${id}/brightness/`, { method: 'POST', body: JSON.stringify({ brightness }) }),
-  /** Set fan speed: percent 0-100 → server value 0-255 */
+  /** ✅ Set fan speed: publish 0-100% directly (no conversion) */
   setFanSpeed: (id: number, speedPercent: number) => {
-    const value = Math.round((Math.max(0, Math.min(100, speedPercent)) / 100) * 255);
-    return request(`/devices/${id}/fan-speed/`, { method: 'POST', body: JSON.stringify({ speed: value }) });
+    const clamped = Math.max(0, Math.min(100, Math.round(speedPercent)));
+    return request(`/devices/${id}/fan-speed/`, { method: 'POST', body: JSON.stringify({ speed: clamped }) });
   },
   /** Generic setValue – sends raw value to the brightness endpoint */
   setValue: (id: number, value: number) => request(`/devices/${id}/brightness/`, { method: 'POST', body: JSON.stringify({ brightness: value }) }),

@@ -139,8 +139,8 @@ export const ControlScreen: React.FC<ControlScreenProps> = ({ onNavigate }) => {
               const isExpanded = expandedDeviceId === device.id;
               const isLight = device.subType === 'light';
               const isFan   = device.subType === 'fan';
-              // device.brightness từ server là 0-255, UI hiển thị dạng % (0-100)
-              const speedPct = Math.min(100, Math.max(0, Math.round(((device.brightness || 0) / 255) * 100)));
+              // device.brightness now stores 0-100 directly
+              const speedPct = Math.max(0, Math.min(100, device.brightness || 0));
 
               const Icon = isLight ? Lightbulb : Fan;
               const grad = isLight
@@ -149,8 +149,10 @@ export const ControlScreen: React.FC<ControlScreenProps> = ({ onNavigate }) => {
               const accentColor = isLight ? '#f59e0b' : '#6366f1';
 
               const handleSlider = (val: number) => {
-                if (isLight) setBrightness(device.id, val);
-                else         setFanSpeed(device.id, val);
+                // Ensure slider value is clamped to 0-100%
+                const clamped = Math.max(0, Math.min(100, Math.round(val)));
+                if (isLight) setBrightness(device.id, clamped);
+                else         setFanSpeed(device.id, clamped);
               };
 
               return (

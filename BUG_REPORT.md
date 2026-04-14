@@ -1,203 +1,294 @@
 # 🐛 Bug Report - Smart Home IoT System
 
-**Ngày kiểm tra:** 13/04/2026  
+**Ngày kiểm tra:** 14/04/2026  
 **Hệ thống:** Smart Home TTDA (FE + BE + CoreIoT)
 
 ---
 
-## 🔴 LỖI 1: Fan Control - Thiếu hàm setValue riêng
+## 🔴 LỖI 1: Slider bị reset về 0% sau khi kéo
 
-**Ưu tiên:** 🔴 **HIGH** | **Thời gian fix:** ~30 phút | **Impact:** Fan không dimming đúng
+**Ưu tiên:** 🔴 **CRITICAL** | **Thời gian fix:** ~2 giờ | **Impact:** UX rối loạn - slider không giữ giá trị
 
 ### Vấn đề:
-- Chỉ có 1 hàm: `CoreIoTClient.set_brightness()` - dùng RPC method `setState`
-- Không có hàm `CoreIoTClient.set_value()` - được yêu cầu cho fan (RPC method `setValue`)
-- Cả đèn và quạt dùng cùng endpoint / cùng method → không phân biệt
+- User kéo slider lên 25%
+- Backend publish dữ liệu đúng (25%)
+- Nhưng sau ~60 giây, slider tự động reset về 0% trên FE
+- Xảy ra cả khi không có thao tác từ CoreIoT
 
-### Ảnh hưởng:
+### Nguyên nhân:
+1. Frontend gửi request API: `setBrightness(25%)`
+2. Backend nhận ✅, publish to CoreIoT ✅
+3. CoreIoT sync về lại brightness=0 (hoặc giá trị khác)
+4. WebSocket broadcast event đến FE
+5. FE cập nhật brightness = 0 ❌ (ghi đè giá trị user vừa set)
+
+### Root cause:
+- Khi user thao tác slider, FE cần phải có **manual override period** để ngăn server sync ghi đè
+- Hiện tại FE không có cơ chế để ignore WebSocket updates trong khoảng thời gian này
+
+### Data flow sai:
 ```
-Frontend: setBrightness(fan_id, 50%) 
-  → value = 128 (0-255)
-  → Backend clamp: 128 → 100
-  → CoreIoT gọi: setState(100)  ❌ Sai - nên dùng setValue(128)
-  → Fan nhận value sai
+FE Slider: 25% 
+  ↓ (API request)
+Backend: brightness = 25 ✅
+  ↓ (Publish to CoreIoT)
+CoreIoT: nhận 25 ✅
+  ↓ (Telemetry sync)
+Backend sync thread: brightness = 0 ❌
+  ↓ (WebSocket broadcast)
+FE App: brightness = 0 ❌ (OVERWRITE user's 25%)
 ```
 
 ### Fix cần làm:
-**File:** `backend/iot_app/coreiot_client.py`
 
-Thêm hàm mới sau `set_brightness()`:
+**File:** `FE/src/app/context/AppContext.tsx`
+
+Thêm **manual override tracking**:
+```typescript
+// Khi user thao tác slider
+const setBrightness = (deviceId: string, brightness: number) => {
+  // 1) Set manual override flag
+  setManualOverrideEndTime(deviceId, Date.now() + 120_000);  // 120s
+  
+  // 2) Optimistic update
+  updateDeviceSnapshot(deviceId, { brightness });
+  
+  // 3) Send to backend
+  await DevicesAPI.setBrightness(id, brightness);
+  
+  // 4) Extend override on success
+  setManualOverrideEndTime(deviceId, Date.now() + 120_000);
+};
+
+// Khi WebSocket update đến
+const updateDeviceStatusFromEvent = (eventData) => {
+  // Kiểm tra: có phải trong manual override period không?
+  const isManualOverride = isInManualOverridePeriod(eventData.device_id);
+  
+  if (!isManualOverride) {
+    // An toàn để update
+    updateDeviceSnapshot(eventData.device_id, eventData);
+  } else {
+    // Trong override period → IGNORE WebSocket update
+    console.log(`⏳ Ignoring server update - manual override period active`);
+  }
+};
+```
+
+---
+
+## 🔴 LỖI 2: Không đồng bộ với Server - CoreIoT → FE không hoạt động
+
+**Ưu tiên:** 🔴 **CRITICAL** | **Thời gian fix:** ~2 giờ | **Impact:** FE không cập nhật real-time khi device thay đổi từ CoreIoT
+
+### Vấn đề:
+- User kéo slider trên **CoreIoT dashboard** (chỉnh brightness = 50%)
+- Backend sync lấy dữ liệu từ CoreIoT ✅
+- **Nhưng FE không nhận được update** ❌
+- FE vẫn hiển thị brightness cũ
+
+### Nguyên nhân:
+1. Backend có thread sync (mỗi 2s fetch telemetry từ CoreIoT) ✅
+2. Nhưng **broadcast_device_status** không được gọi với brightness value
+3. FE WebSocket receiver không nhận được brightness data
+4. Hoặc brightness được đổi sang 0-100 format nhưng không được convert lại
+
+### Data flow sai:
+```
+CoreIoT: brightness = 128 (PWM 0-255)
+  ↓ (Backend sync fetch)
+Backend coreiot_sync.py: ✅ Nhận 128
+  ↓ (Conversion?)
+Backend: brightness = ? (mất ngữ cảnh - có convert sang 0-100 không?)
+  ↓ (Broadcast?)
+FE: brightness = ??? (không hiển thị hoặc hiển thị sai)
+```
+
+### Fix cần làm:
+
+**File 1:** `backend/iot_app/coreiot_sync.py`
+
+Đảm bảo:
 ```python
-def set_value(self, coreiot_device_id: str, value: int) -> bool:
-    """Fan control - RPC method: setValue (0-255 PWM)"""
-    template = getattr(settings, "COREIOT_SETSTATE_URL_TEMPLATE", "").strip()
-    if not template or not coreiot_device_id:
-        return False
+def sync_once():
+    # ... fetch telemetry ...
+    
+    # Brightness sync (0-255 → 0-100)
+    brightness_raw = max(0, min(255, telemetry.get('brightness', 0)))
+    brightness_normalized = round((brightness_raw / 255) * 100) if brightness_raw > 0 else 0
+    
+    device.brightness = brightness_normalized  # Store 0-100 in DB
+    device.save()
+    
+    # ✅ IMPORTANT: Broadcast normalized value to FE
+    broadcast_device_status(device.device_id, device.status, device.device_name, brightness_normalized)
+```
 
-    encoded_device_id = urllib.parse.quote(str(coreiot_device_id), safe="")
-    path = template.replace("{device_id}", encoded_device_id)
-    url = _join_url(self.base_url, path)
+**File 2:** `FE/src/app/context/AppContext.tsx`
 
-    # Giữ nguyên 0-255, không clamp
-    value = max(0, min(255, int(value)))
-    mode = getattr(settings, "COREIOT_SETSTATE_MODE", "rpc").strip().lower()
+Kiểm tra:
+```typescript
+const updateDeviceStatusFromEvent = (eventData) => {
+  // ✅ Phải nhận được brightness from server
+  if (eventData.brightness !== undefined) {
+    // Nếu không trong manual override → update
+    if (!isInManualOverridePeriod(eventData.device_id)) {
+      updateDeviceSnapshot(eventData.device_id, {
+        brightness: eventData.brightness  // 0-100 format
+      });
+    }
+  }
+};
+```
 
-    if mode == "direct":
-        body = {"pwm": value}  # hoặc tên key phù hợp
+### Checklist debug:
+- [ ] Backend logs có `🔄 CoreIoT sync brightness: ...` không?
+- [ ] Backend logs có `📤 Broadcasting ...` không?
+- [ ] FE console có `📥 WebSocket event: brightness=...` không?
+- [ ] brightness value có phải 0-100 format không?
+
+---
+
+## 🔴 LỖI 3: Motion Sensor không hoạt động - không nhận motion data từ server
+
+**Ưu tiên:** 🔴 **CRITICAL** | **Thời gian fix:** ~1.5 giờ | **Impact:** Smart automation không trigger - không thể detect motion
+
+### Vấn đề:
+- CoreIoT có motion sensor data ✅
+- Backend sync thread không sync motion ❌
+- FE không nhận được motion events ❌
+- Automation rules không trigger
+
+### Dữ liệu flow hiện tại:
+```
+CoreIoT telemetry: motion=1 (hoặc 0)
+  ↓ (Backend fetch)
+Backend coreiot_sync.py: ✅ Nhận motion=1
+  ↓ (Sync to DB?)
+Backend: ??? (không clear motion được lưu ở đâu)
+  ↓ (Broadcast?)
+FE: ??? (không nhận motion data)
+  ↓ (Automation?)
+Automation: ❌ không trigger
+```
+
+### Nguyên nhân:
+1. Backend sync code có fetch motion nhưng **logging không rõ ràng**
+2. Không chắc motion được lưu vào SensorData model không
+3. Không chắc WebSocket broadcast motion event không
+4. FE automation rule dùng `motionSensor.currentValue` nhưng có data không?
+
+### Fix cần làm:
+
+**File 1:** `backend/iot_app/coreiot_sync.py`
+
+Thêm logging để debug motion:
+```python
+def sync_once():
+    # ... brightness sync ...
+    
+    # Motion sensor sync (NEW - with logging)
+    motion_key = getattr(settings, "COREIOT_MOTION_KEY", "motion")
+    motion_sensor_id = getattr(settings, "COREIOT_LOCAL_MOTION_SENSOR_ID", "")
+    
+    logger.info(f"🔍 Checking motion: key={motion_key}, sensor_id={motion_sensor_id}")
+    
+    if motion_key in telemetry:
+        value = telemetry.get(motion_key, 0)
+        device = _get_device(motion_sensor_id)
+        
+        if device:
+            logger.info(f"✅ Motion detected: device={device.device_name}, value={value}")
+            _upsert_sensor(device, "motion", float(value), "")  # Save to DB
+            # ✨ Broadcast to FE
+            broadcast_sensor_update(device.device_id, value, "", device.device_id, "motion")
+        else:
+            logger.error(f"❌ Motion sensor device not found: {motion_sensor_id}")
     else:
-        method_name = getattr(settings, "COREIOT_SETSTATE_VALUE_METHOD", "setValue")
-        body = {
-            "method": method_name,
-            "params": value,
-        }
+        logger.warning(f"⚠️  Motion key not in telemetry. Available: {list(telemetry.keys())}")
+```
 
-    result = self._request("POST", url, body=body)
-    return result is not None
+**File 2:** `FE/src/app/context/AppContext.tsx`
+
+Thêm logging khi nhận motion:
+```typescript
+const updateDeviceFromEvent = (eventData: any) => {
+  if (eventData.metric === "motion") {
+    console.log(`📊 Motion event received: device_id=${eventData.device_id}, value=${eventData.value}`);
+    
+    // Update motion sensor in state
+    setSensorData(prev => ({
+      ...prev,
+      [eventData.device_id]: {
+        ...prev[eventData.device_id],
+        currentValue: eventData.value
+      }
+    }));
+  }
+};
+```
+
+### Checklist debug:
+- [ ] Backend logs có `🔍 Checking motion:` không?
+- [ ] Backend logs có `✅ Motion detected:` hoặc `❌ Motion sensor device not found:` không?
+- [ ] `.env` có `COREIOT_LOCAL_MOTION_SENSOR_ID=4` không?
+- [ ] FE console có `📊 Motion event received:` log không?
+- [ ] FE DevTools có thấy motion value thay đổi không?
+
+### Testing:
+```bash
+# Terminal 1: Backend
+python manage.py runserver
+
+# Terminal 2: Check motion sensor exist
+python manage.py shell
+>>> from devices_app.models import Device, DeviceType
+>>> Device.objects.all().values('device_id', 'device_name', 'type')
+>>> # Kiểm tra có device với ID=4 không?
+
+# Terminal 3: FE
+npm run dev
+
+# Browser: Mở DevTools Console → tìm motion logs
+# Trigger motion trên CoreIoT → xem console có log không
 ```
 
 ---
 
-## 🔴 LỖI 2: Backend Double Clamp - Mất độ chính xác PWM
+## 📋 Summary - Cần fix gì
 
-**Ưu tiên:** 🔴 **HIGH** | **Thời gian fix:** ~20 phút | **Impact:** LED/Fan control không chính xác
-
-### Vấn đề:
-Value bị clamp 2 lần, làm mất độ chính xác:
-```
-Frontend: 50% → 128 (0-255)
-  ↓ DeviceBrightnessView.post():
-    brightness = max(0, min(100, 128)) = 100  ❌ Clamp 1
-  ↓ CoreIoTClient.set_brightness():
-    value = max(0, min(100, 100)) = 100  ❌ Clamp 2
-  ↓ CoreIoT RPC: setState(100)  ❌ Sai
-```
-
-### Ảnh hưởng:
-- Slider 0-100% có 101 giá trị, nhưng backend chỉ giữ 0-100
-- Mất độ chính xác PWM
-- LED/Fan không dimming đúng theo slider
-
-### Fix cần làm:
-
-**File 1:** `backend/devices_app/views.py` (DeviceBrightnessView.post)
-
-Thay đổi:
-```python
-# ❌ Cũ:
-brightness = max(0, min(100, int(brightness)))
-
-# ✅ Mới:
-brightness = max(0, min(255, int(brightness)))  # Giữ nguyên 0-255
-```
-
-**File 2:** `backend/iot_app/coreiot_client.py` (set_brightness)
-
-Thay đổi:
-```python
-# ❌ Cũ:
-value = max(0, min(100, int(brightness)))
-
-# ✅ Mới:
-value = max(0, min(255, int(brightness)))  # Giữ nguyên 0-255
-```
+| Bug | Status | Priority | Root Cause | Fix Point |
+|-----|--------|----------|-----------|-----------|
+| Slider reset 0% | ❌ Open | 🔴 CRITICAL | Manual override period missing | FE/AppContext |
+| No CoreIoT→FE sync | ❌ Open | 🔴 CRITICAL | brightness not broadcast or wrong format | BE/coreiot_sync.py + FE/AppContext |
+| Motion not working | ❌ Open | 🔴 CRITICAL | Motion sync logging unclear, no broadcast | BE/coreiot_sync.py + FE/AppContext |
 
 ---
 
-## 🔴 LỖI 3: Backend không phân biệt Light vs Fan
+## 🧪 Test Plan
 
-**Ưu tiên:** 🔴 **HIGH** | **Thời gian fix:** ~40 phút | **Impact:** Không thể gọi method khác nhau
-
-### Vấn đề:
-```python
-class DeviceBrightnessView(APIView):
-    def post(self, request, pk):
-        # ❌ Không check device.type
-        # ❌ Tất cả devices dùng endpoint: /devices/{id}/brightness/
-        # ❌ Luôn gọi: CoreIoTClient().set_brightness()
+### Phase 1: Fix Motion Sync (điều kiện cho phase 2)
+```
+1. Add logging to backend coreiot_sync.py
+2. Run backend + check logs for motion
+3. Check motion appears in FE console
+4. ✅ Motion events flow end-to-end
 ```
 
-### Ảnh hưởng:
-- Không phân biệt light vs fan
-- Cảng không gọi method RPC khác nhau (`setState` vs `setValue`)
-- Cả fan và light đều dùng `setState` ❌
-
-### Fix cần làm:
-**File:** `backend/devices_app/views.py` + `backend/devices_app/urls.py`
-
-**✅ RECOMMENDED:** Tạo 2 endpoint riêng (phân biệt rõ ràng):
-
-#### 1️⃣ Giữ lại endpoint Light:
-```python
-# /devices/{id}/brightness/ - cho LIGHT ONLY
-
-class DeviceBrightnessView(APIView):
-    def post(self, request, pk):
-        device = get_object_or_404(Device, pk=pk)
-        
-        # ONLY accept light devices
-        if device.type.name_type != 'light':
-            return Response(
-                {'error': 'This endpoint is for light devices only'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        brightness = request.data.get('brightness', 0)
-        brightness = max(0, min(255, int(brightness)))  # 0-255
-
-        coreiot_device_id = getattr(settings, 'COREIOT_DEVICE_ID', '').strip()
-        
-        try:
-            ok = CoreIoTClient().set_state(coreiot_device_id, brightness)  # ✨ setState
-        except Exception as e:
-            logger.error(f'CoreIoT setState error: {e}')
-            return Response({'error': 'Failed to set brightness'}, status=status.HTTP_502_BAD_GATEWAY)
-        
-        device.brightness = brightness
-        device.status = (brightness > 0)
-        device.save(update_fields=['brightness', 'status'])
-        
-        broadcast_device_status(device.device_id, device.status, device.device_name, brightness)
-        
-        return Response({
-            'message': f'{device.device_name} brightness set to {brightness}/255',
-            'brightness': brightness,
-            'status': device.status,
-        })
+### Phase 2: Fix Slider Reset (nếu motion OK)
+```
+1. Implement manual override period in FE (120s)
+2. Kéo slider → kiểm tra dùng remain 120s ✅
+3. CoreIoT change brightness → FE không update ✅ (trong 120s)
+4. Sau 120s → FE cập nhật CoreIoT value ✅
 ```
 
-#### 2️⃣ Thêm NEW endpoint Fan:
-```python
-# /devices/{id}/fan-speed/ - cho FAN ONLY
-
-class DeviceFanSpeedView(APIView):
-    def post(self, request, pk):
-        device = get_object_or_404(Device, pk=pk)
-        
-        # ONLY accept fan devices
-        if device.type.name_type != 'fan':
-            return Response(
-                {'error': 'This endpoint is for fan devices only'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        speed = request.data.get('speed', 0)
-        speed = max(0, min(255, int(speed)))  # 0-255 PWM
-
-        coreiot_fan_device_id = getattr(settings, 'COREIOT_DEVICE_ID', '').strip()
-        
-        try:
-            ok = CoreIoTClient().set_value(coreiot_fan_device_id, speed)  # ✨ setValue
-        except Exception as e:
-            logger.error(f'CoreIoT setValue error: {e}')
-            return Response({'error': 'Failed to set fan speed'}, status=status.HTTP_502_BAD_GATEWAY)
-        
-        device.brightness = speed  # Dùng cột brightness để lưu PWM value (0-255)
-        device.status = (speed > 0)
-        device.save(update_fields=['brightness', 'status'])
-        
-        broadcast_device_status(device.device_id, device.status, device.device_name, speed)
-        
-        return Response({
+### Phase 3: Fix Server Sync (if both above OK)
+```
+1. Ensure brightness synced with 0-100 format
+2. Verify broadcast includes brightness
+3. FE updates real-time from CoreIoT ✅
+```
             'message': f'{device.device_name} fan speed set to {speed}/255',
             'speed': speed,
             'status': device.status,

@@ -292,7 +292,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const roomsSnapshotRef = useRef<Room[]>([]);
   // Manual override: khi user tự tay bật/tắt thiết bị, block automation 60s cho thiết bị đó
   const manualOverrideRef = useRef<Map<string, number>>(new Map());
-  const MANUAL_OVERRIDE_MS = 60_000;
+  const MANUAL_OVERRIDE_MS = 120_000;  // ✅ Extend to 2 minutes to allow CoreIoT sync buffer
 
   const syncLatestSensorValues = useCallback(async () => {
     const latestSensorData = await sensorDataApi.latest().catch(() => []);
@@ -444,16 +444,27 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const updateDeviceStatusFromEvent = (eventData: any) => {
       if (!eventData?.device_id) return;
+      
+      const deviceId = String(eventData.device_id);
+      const now = Date.now();
+      const overrideUntil = manualOverrideRef.current.get(deviceId) ?? 0;
+      const isManuallyControlled = now < overrideUntil;
+      
+      console.log(`📥 WebSocket event: device_id=${deviceId}, brightness=${eventData.brightness}, isManualOverride=${isManuallyControlled}`);
+      
       setAllDevices((prev) =>
         prev.map((device) =>
-          device.id === String(eventData.device_id)
+          device.id === deviceId
             ? {
                 ...device,
                 isOn: Boolean(eventData.status),
                 brightness:
-                  typeof eventData.brightness === 'number'
-                    ? Math.max(0, Math.min(255, Math.round(eventData.brightness)))
-                    : device.brightness,
+                  // ✨ Don't update brightness if:
+                  // 1. User just manually controlled (within manual override period)
+                  // 2. Server didn't send brightness explicitly
+                  (isManuallyControlled || typeof eventData.brightness !== 'number')
+                    ? device.brightness  // Keep current value
+                    : eventData.brightness,  // Update only if server explicitly sent it
                 lastUpdated: new Date(),
               }
             : device
@@ -754,18 +765,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const setBrightness = async (deviceId: string, brightness: number) => {
     manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
-    const clampedBrightness = Math.max(0, Math.min(100, Math.round(brightness)));
-    const serverValue = Math.round((clampedBrightness / 100) * 255); // 0-100% → 0-255
-    const isOn = clampedBrightness > 0;
+    const clamped = Math.max(0, Math.min(100, Math.round(brightness)));
+    // ✅ Store and publish 0-100 directly (no conversion)
+    const isOn = clamped > 0;
     const previousDevice = allDevices.find((d) => d.id === deviceId);
     const previousBrightness = previousDevice?.brightness ?? 0;
     const previousIsOn = previousDevice?.isOn ?? false;
 
-    // Optimistic UI update for smooth slider dragging.
+    console.log(`📤 setBrightness request: deviceId=${deviceId}, brightness=${clamped}%`);
+
+    // Optimistic UI update
     setAllDevices((prev) =>
       prev.map((d) =>
         d.id === deviceId
-          ? { ...d, brightness: serverValue, isOn, lastUpdated: new Date() }
+          ? { ...d, brightness: clamped, isOn, lastUpdated: new Date() }
           : d
       )
     );
@@ -776,8 +789,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     brightnessSyncTimersRef.current[deviceId] = window.setTimeout(async () => {
-      try {
-        await devicesApi.setValue(Number(deviceId), serverValue);
+      try{
+        console.log(`📡 Sending brightness API: deviceId=${deviceId}, brightness=${clamped}%`);
+        // ✅ Send 0-100% directly
+        await devicesApi.setBrightness(Number(deviceId), clamped);
+        // ✅ Success: extend manual override to prevent websocket from overwriting
+        console.log(`✅ Brightness API success, extending manual override for ${deviceId}`);
+        manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
       } catch (e) {
         console.error('setBrightness error', e);
         setAllDevices((prev) =>
@@ -791,17 +809,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }, 120);
   };
 
-  // Fan speed: 0-100% displayed, converted to 0-255 on server
+  // ✅ Fan speed: 0-100% published to server (no conversion)
   const fanSpeedTimersRef = useRef<Record<string, number>>({});
   const setFanSpeed = async (deviceId: string, speedPercent: number) => {
     manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
     const clamped = Math.max(0, Math.min(100, Math.round(speedPercent)));
-    const serverValue = Math.round((clamped / 100) * 255);
+    // ✅ Store and publish 0-100 directly
     const isOn = clamped > 0;
     const previousDevice = allDevices.find(d => d.id === deviceId);
 
     setAllDevices(prev => prev.map(d =>
-      d.id === deviceId ? { ...d, brightness: serverValue, isOn, lastUpdated: new Date() } : d
+      d.id === deviceId ? { ...d, brightness: clamped, isOn, lastUpdated: new Date() } : d
     ));
 
     const existingTimer = fanSpeedTimersRef.current[deviceId];
@@ -809,7 +827,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     fanSpeedTimersRef.current[deviceId] = window.setTimeout(async () => {
       try {
+        // ✅ Send only 0-100% to server (no conversion)
         await devicesApi.setFanSpeed(Number(deviceId), clamped);
+        // ✅ Success: extend manual override to prevent websocket from overwriting
+        manualOverrideRef.current.set(deviceId, Date.now() + MANUAL_OVERRIDE_MS);
       } catch (e) {
         console.error('setFanSpeed error', e);
         setAllDevices(prev => prev.map(d =>

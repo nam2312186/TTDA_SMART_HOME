@@ -75,21 +75,27 @@ def sync_once() -> bool:
 
     # Brightness actuator sync
     if brightness_key in telemetry:
-        brightness = _to_int(telemetry.get(brightness_key))
+        brightness_raw = _to_int(telemetry.get(brightness_key))
         actuator = _get_device(light_actuator_id)
-        if brightness is not None and actuator is not None:
-            brightness = max(0, min(255, brightness))  # ✨ Giữ 0-255 thay vì 100
-            status = brightness > 0
-            if actuator.brightness != brightness or actuator.status != status:
-                actuator.brightness = brightness
+        if brightness_raw is not None and actuator is not None:
+            # ✅ CoreIoT sends 0-255, convert to 0-100 for DB/FE
+            brightness_raw = max(0, min(255, brightness_raw))
+            brightness_normalized = round((brightness_raw / 255) * 100) if brightness_raw > 0 else 0
+            status = brightness_normalized > 0
+            
+            logger.info(f'🔄 CoreIoT sync brightness: {brightness_raw}/255 → {brightness_normalized}%')
+            
+            if actuator.brightness != brightness_normalized or actuator.status != status:
+                actuator.brightness = brightness_normalized
                 actuator.status = status
                 actuator.save(update_fields=["brightness", "status"])
                 create_activity_log(
                     device=actuator,
                     action="coreiot_brightness_synced",
-                    details=f"CoreIoT brightness -> {brightness}/255",
+                    details=f"CoreIoT brightness -> {brightness_normalized}%",
                 )
-                broadcast_device_status(actuator.device_id, status, actuator.device_name, brightness)
+                # ✅ Broadcast normalized 0-100 value
+                broadcast_device_status(actuator.device_id, status, actuator.device_name, brightness_normalized)
 
     # Temperature sensor sync
     if temperature_key in telemetry:
@@ -125,22 +131,28 @@ def sync_once() -> bool:
     fan_speed_key = getattr(settings, "COREIOT_FAN_SPEED_KEY", "fan_speed")
     fan_actuator_id = getattr(settings, "COREIOT_LOCAL_FAN_ACTUATOR_ID", "")
     if fan_speed_key in telemetry:
-        fan_speed = _to_int(telemetry.get(fan_speed_key))
+        fan_speed_raw = _to_int(telemetry.get(fan_speed_key))
         fan_device = _get_device(fan_actuator_id)
-        if fan_speed is not None and fan_device is not None:
-            fan_speed = max(0, min(255, fan_speed))
-            status = fan_speed > 0
-            if fan_device.brightness != fan_speed or fan_device.status != status:
-                fan_device.brightness = fan_speed
+        if fan_speed_raw is not None and fan_device is not None:
+            # ✅ CoreIoT sends 0-255, convert to 0-100 for DB/FE
+            fan_speed_raw = max(0, min(255, fan_speed_raw))
+            fan_speed_normalized = round((fan_speed_raw / 255) * 100) if fan_speed_raw > 0 else 0
+            status = fan_speed_normalized > 0
+            
+            logger.info(f'🔄 CoreIoT sync fan speed: {fan_speed_raw}/255 → {fan_speed_normalized}%')
+            
+            if fan_device.brightness != fan_speed_normalized or fan_device.status != status:
+                fan_device.brightness = fan_speed_normalized
                 fan_device.status = status
                 fan_device.save(update_fields=["brightness", "status"])
                 
                 create_activity_log(
                     device=fan_device,
                     action="coreiot_fan_speed_synced",
-                    details=f"CoreIoT fan speed synced -> {fan_speed}/255",
+                    details=f"CoreIoT fan speed synced -> {fan_speed_normalized}%",
                 )
-                broadcast_device_status(fan_device.device_id, status, fan_device.device_name, fan_speed)
+                # ✅ Broadcast normalized 0-100 value
+                broadcast_device_status(fan_device.device_id, status, fan_device.device_name, fan_speed_normalized)
 
     return True
 
