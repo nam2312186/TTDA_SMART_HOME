@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { BottomNav, TabType } from './components/BottomNav';
 import { SplashScreen } from './screens/SplashScreen';
@@ -60,13 +60,28 @@ type Screen =
   | { type: 'detailedVisualization' };
 
 function MainApp() {
-  const { logout, loginContext, currentUser } = useApp();
+  const { logout, loginContext, currentUser, alerts } = useApp();
   const [authScreen, setAuthScreen] = useState<AuthScreen>({ type: 'splash' });
   const [isLoggedIn, setIsLoggedIn] = useState(() => !!localStorage.getItem('user_id'));
   const [activeTab, setActiveTab] = useState<TabType>('home');
   const [screenStack, setScreenStack] = useState<Screen[]>([{ type: 'home' }]);
+  const [seenAlertIds, setSeenAlertIds] = useState<Set<string>>(new Set());
 
   const currentScreen = screenStack[screenStack.length - 1];
+
+  useEffect(() => {
+    if (activeTab !== 'alerts') return;
+    setSeenAlertIds((prev) => {
+      const next = new Set(prev);
+      alerts.forEach((alert) => next.add(alert.id));
+      return next;
+    });
+  }, [activeTab, alerts]);
+
+  const unseenAlertCount = useMemo(
+    () => alerts.filter((alert) => !alert.cleared && !seenAlertIds.has(alert.id)).length,
+    [alerts, seenAlertIds]
+  );
 
   const handleNavigate = (screen: string, data?: any) => {
     let newScreen: Screen;
@@ -210,6 +225,7 @@ function MainApp() {
     localStorage.removeItem('email');
     localStorage.removeItem('role');
     setIsLoggedIn(false);
+    setSeenAlertIds(new Set());
     setAuthScreen({ type: 'login' });
     setScreenStack([{ type: 'home' }]);
   };
@@ -396,7 +412,11 @@ function MainApp() {
 
       {/* Bottom Navigation */}
       {showBottomNav && (
-        <BottomNav activeTab={activeTab} onTabChange={handleTabChange} />
+        <BottomNav
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          alertBadgeCount={unseenAlertCount}
+        />
       )}
       </InAppToastProvider>
     </div>

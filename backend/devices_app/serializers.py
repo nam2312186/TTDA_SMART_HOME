@@ -3,12 +3,10 @@ from rest_framework import serializers
 from monitoring_app.models import Threshold
 from .models import Device, DeviceType
 
-
 class DeviceTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = DeviceType
         fields = '__all__'
-
 
 class DeviceSerializer(serializers.ModelSerializer):
     room_name = serializers.SerializerMethodField()
@@ -47,17 +45,11 @@ class DeviceSerializer(serializers.ModelSerializer):
         return obj.type.name_type if obj.type else None
 
     def get_is_sensor(self, obj):
-        """
-        Explicitly marks a device as sensor/actuator.
-        For ambiguous types like 'light', use COREIOT settings to distinguish.
-        """
         type_name = (obj.type.name_type if obj.type else '').lower()
-        # Pure sensor/actuator types
         if type_name in ('temperature', 'humidity', 'sensor'):
             return True
         if type_name in ('fan', 'door', 'actuator'):
             return False
-        # Ambiguous 'light' type: check COREIOT sensor ID list
         sensor_ids = [
             str(getattr(settings, 'COREIOT_LOCAL_LIGHT_SENSOR_ID', '')).strip(),
             str(getattr(settings, 'COREIOT_LOCAL_TEMPERATURE_SENSOR_ID', '')).strip(),
@@ -66,7 +58,6 @@ class DeviceSerializer(serializers.ModelSerializer):
         sensor_ids = [sid for sid in sensor_ids if sid]
         if str(obj.device_id) in sensor_ids:
             return True
-        # Fallback: has threshold → treat as sensor
         return bool(obj.threshold)
 
     def get_threshold_data(self, obj):
@@ -76,6 +67,7 @@ class DeviceSerializer(serializers.ModelSerializer):
             'threshold_id': obj.threshold.threshold_id,
             'min_value': obj.threshold.min_value,
             'max_value': obj.threshold.max_value,
+            'require_motion': obj.threshold.require_motion, # Added
         }
 
     def create(self, validated_data):
@@ -96,12 +88,13 @@ class DeviceSerializer(serializers.ModelSerializer):
             return
         min_value = payload.get('min_value')
         max_value = payload.get('max_value')
+        require_motion = payload.get('require_motion', False) # Added
+
         if min_value in (None, '') and max_value in (None, ''):
             old_threshold_id = device.threshold_id
             if old_threshold_id:
                 device.threshold = None
                 device.save(update_fields=['threshold'])
-                # Remove orphan threshold if no devices use it.
                 if not Device.objects.filter(threshold_id=old_threshold_id).exists():
                     Threshold.objects.filter(threshold_id=old_threshold_id).delete()
             return
@@ -110,6 +103,7 @@ class DeviceSerializer(serializers.ModelSerializer):
             threshold = Threshold.objects.create(
                 min_value=min_value,
                 max_value=max_value,
+                require_motion=require_motion # Added
             )
             device.threshold = threshold
             device.save(update_fields=['threshold'])
@@ -117,6 +111,5 @@ class DeviceSerializer(serializers.ModelSerializer):
             Threshold.objects.filter(threshold_id=device.threshold_id).update(
                 min_value=min_value,
                 max_value=max_value,
+                require_motion=require_motion # Added
             )
-
-

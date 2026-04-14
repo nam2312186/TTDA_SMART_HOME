@@ -21,6 +21,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR.parent / '.env')
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name, str(default))
+    try:
+        return float(str(raw).replace(',', '.'))
+    except (TypeError, ValueError):
+        return float(default)
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
@@ -199,7 +207,7 @@ COREIOT_LOCAL_FAN_ACTUATOR_ID = os.environ.get('COREIOT_LOCAL_FAN_ACTUATOR_ID', 
 COREIOT_LOCAL_TEMPERATURE_SENSOR_ID = os.environ.get('COREIOT_LOCAL_TEMPERATURE_SENSOR_ID', '')
 COREIOT_LOCAL_HUMIDITY_SENSOR_ID = os.environ.get('COREIOT_LOCAL_HUMIDITY_SENSOR_ID', '')
 COREIOT_LOCAL_LIGHT_SENSOR_ID = os.environ.get('COREIOT_LOCAL_LIGHT_SENSOR_ID', '')
-COREIOT_SYNC_INTERVAL_SECONDS = int(os.environ.get('COREIOT_SYNC_INTERVAL_SECONDS', 2))
+COREIOT_SYNC_INTERVAL_SECONDS = _env_float('COREIOT_SYNC_INTERVAL_SECONDS', 2)
 COREIOT_ACTUATOR_STALE_SECONDS = int(os.environ.get('COREIOT_ACTUATOR_STALE_SECONDS', 15))
 COREIOT_SCHEDULE_TIMEZONE = os.environ.get('COREIOT_SCHEDULE_TIMEZONE', 'Asia/Ho_Chi_Minh')
 COREIOT_SCHEDULE_LOCAL_FALLBACK = os.environ.get('COREIOT_SCHEDULE_LOCAL_FALLBACK', 'True') == 'True'

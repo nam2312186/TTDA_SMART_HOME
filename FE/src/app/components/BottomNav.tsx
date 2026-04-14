@@ -13,9 +13,14 @@ export type TabType = 'home' | 'areas' | 'control' | 'schedule' | 'alerts' | 'mo
 interface BottomNavProps {
   activeTab: TabType;
   onTabChange: (tab: TabType) => void;
+  alertBadgeCount?: number;
 }
 
-export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onTabChange }) => {
+export const BottomNav: React.FC<BottomNavProps> = ({
+  activeTab,
+  onTabChange,
+  alertBadgeCount = 0,
+}) => {
   const tabs = [
     { id: 'home' as TabType, label: 'Home', icon: Home },
     { id: 'areas' as TabType, label: 'Areas', icon: Grid3x3 },
@@ -40,6 +45,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onTabChange }) 
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
+          const showAlertBadge = tab.id === 'alerts' && alertBadgeCount > 0;
+          const badgeLabel = alertBadgeCount > 99 ? '99+' : String(alertBadgeCount);
           return (
             <button
               key={tab.id}
@@ -56,15 +63,24 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onTabChange }) 
               )}
               <div
                 className="w-8 h-8 rounded-xl flex items-center justify-center transition-all"
-                style={
-                  isActive
+                style={{
+                  position: 'relative',
+                  ...(isActive
                     ? { background: 'var(--gradient-brand)', boxShadow: '0 2px 8px rgba(99,102,241,0.4)' }
-                    : {}
-                }
+                    : {}),
+                }}
               >
                 <Icon
                   className={`w-4 h-4 transition-all ${isActive ? 'text-white' : 'text-gray-400'}`}
                 />
+                {showAlertBadge && (
+                  <span
+                    className="absolute -top-1.5 -right-2.5 min-w-[18px] h-[18px] rounded-full px-1 text-[10px] font-bold text-white flex items-center justify-center"
+                    style={{ background: 'linear-gradient(135deg,#ef4444,#f97316)', boxShadow: '0 2px 8px rgba(239,68,68,0.45)' }}
+                  >
+                    {badgeLabel}
+                  </span>
+                )}
               </div>
               <span
                 className="text-xs font-semibold transition-all"

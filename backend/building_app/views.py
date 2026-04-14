@@ -2,7 +2,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from django.shortcuts import get_object_or_404
-from .models import Floor, Room
+from .models import Floor, Room, RoomManagement
 from .serializers import FloorSerializer, RoomSerializer
 from users_app.models import User
 from logs_app.utils import create_activity_log
@@ -27,9 +27,35 @@ def _require_admin(request):
     return user, None
 
 
+def _require_authenticated(request):
+    user = _resolve_request_user(request)
+    if not user:
+        return None, Response({'error': 'X-User-Id is required'}, status=status.HTTP_401_UNAUTHORIZED)
+    return user, None
+
+
+def _can_access_room(user, room_id):
+    if user.role_id and user.role_id.role_name == 'admin':
+        return True
+    return RoomManagement.objects.filter(user=user, room_id=room_id).exists()
+
+
 class FloorListView(APIView):
     def get(self, request):
-        floors = Floor.objects.all().order_by('floor_id')
+        user, error = _require_authenticated(request)
+        if error:
+            return error
+
+        if user.role_id and user.role_id.role_name == 'admin':
+            floors = Floor.objects.all().order_by('floor_id')
+        else:
+            allowed_room_floor_ids = (
+                RoomManagement.objects
+                .filter(user=user)
+                .values_list('room__floor_id', flat=True)
+            )
+            floors = Floor.objects.filter(floor_id__in=allowed_room_floor_ids).order_by('floor_id')
+
         return Response(FloorSerializer(floors, many=True).data)
 
     def post(self, request):
@@ -86,7 +112,16 @@ class FloorDetailView(APIView):
 
 class RoomListView(APIView):
     def get(self, request):
-        rooms = Room.objects.all()
+        user, error = _require_authenticated(request)
+        if error:
+            return error
+
+        if user.role_id and user.role_id.role_name == 'admin':
+            rooms = Room.objects.all()
+        else:
+            allowed_room_ids = RoomManagement.objects.filter(user=user).values_list('room_id', flat=True)
+            rooms = Room.objects.filter(room_id__in=allowed_room_ids)
+
         return Response(RoomSerializer(rooms, many=True).data)
 
     def post(self, request):
@@ -107,7 +142,12 @@ class RoomListView(APIView):
 
 class RoomDetailView(APIView):
     def get(self, request, pk):
+        user, error = _require_authenticated(request)
+        if error:
+            return error
         room = get_object_or_404(Room, pk=pk)
+        if not _can_access_room(user, room.room_id):
+            return Response({'error': 'Permission denied for this room'}, status=status.HTTP_403_FORBIDDEN)
         return Response(RoomSerializer(room).data)
 
     def put(self, request, pk):
@@ -144,5 +184,14 @@ class RoomDetailView(APIView):
 
 class FloorRoomsView(APIView):
     def get(self, request, floor_id):
-        rooms = Room.objects.filter(floor_id=floor_id)
+        user, error = _require_authenticated(request)
+        if error:
+            return error
+
+        if user.role_id and user.role_id.role_name == 'admin':
+            rooms = Room.objects.filter(floor_id=floor_id)
+        else:
+            allowed_room_ids = RoomManagement.objects.filter(user=user).values_list('room_id', flat=True)
+            rooms = Room.objects.filter(floor_id=floor_id, room_id__in=allowed_room_ids)
+
         return Response(RoomSerializer(rooms, many=True).data)

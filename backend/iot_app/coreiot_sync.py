@@ -16,6 +16,13 @@ from monitoring_app.views import _check_threshold
 
 logger = logging.getLogger("iot_app.coreiot_sync")
 _last_schedule_check_slot: str = ""
+_last_actuator_command_times: dict[str, float] = {}  # device_id -> timestamp
+
+
+def record_actuator_command(device_id: int | str) -> None:
+    """Record that a command was sent to an actuator to trigger the protection window."""
+    _last_actuator_command_times[str(device_id)] = time.time()
+
 
 
 def _to_float(value: Any) -> float | None:
@@ -97,34 +104,53 @@ def sync_once() -> bool:
         val = _to_int(telemetry.get(brightness_key))
         actuator = _get_device(light_actuator_id)
         if val is not None and actuator is not None:
-            actuator_type = (getattr(actuator.type, "name_type", "") or "").lower()
-            if actuator_type not in ["light", "actuator"]:
-                logger.warning("Skip brightness sync: mapped light actuator is type=%s (device=%s)", actuator_type, actuator.device_name)
-            else:
-                normalized = _normalize_percent(val)
-                status = normalized > 0
-                if actuator.brightness != normalized or actuator.status != status:
-                    actuator.brightness = normalized
-                    actuator.status = status
-                    actuator.save(update_fields=["brightness", "status"])
-                    broadcast_device_status(actuator.device_id, status, actuator.device_name, normalized)
+                actuator_type = (getattr(actuator.type, "name_type", "") or "").lower()
+                if actuator_type not in ["light", "actuator"]:
+                    logger.warning("Skip brightness sync: mapped light actuator is type=%s (device=%s)", actuator_type, actuator.device_name)
+                else:
+                    # Protection: Skip if a command was recently sent manually or via schedule
+                    now_ts = time.time()
+                    last_cmd = _last_actuator_command_times.get(str(actuator.device_id), 0)
+                    stale_limit = int(getattr(settings, "COREIOT_ACTUATOR_STALE_SECONDS", 15))
+                    
+                    if now_ts - last_cmd < stale_limit:
+                        # logger.debug("Skipping telemetry sync for %s (protection window)", actuator.device_name)
+                        pass
+                    else:
+                        normalized = _normalize_percent(val)
+                        status = normalized > 0
+                        if actuator.brightness != normalized or actuator.status != status:
+                            actuator.brightness = normalized
+                            actuator.status = status
+                            actuator.save(update_fields=["brightness", "status"])
+                            broadcast_device_status(actuator.device_id, status, actuator.device_name, normalized)
+
 
     # Sync Fan Actuator
     if fan_speed_key in telemetry:
         val = _to_int(telemetry.get(fan_speed_key))
         fan = _get_device(fan_actuator_id)
         if val is not None and fan is not None:
-            fan_type = (getattr(fan.type, "name_type", "") or "").lower()
-            if fan_type != "fan":
-                logger.warning("Skip fan sync: mapped fan actuator is type=%s (device=%s)", fan_type, fan.device_name)
-            else:
-                normalized = _normalize_percent(val)
-                status = normalized > 0
-                if fan.brightness != normalized or fan.status != status:
-                    fan.brightness = normalized
-                    fan.status = status
-                    fan.save(update_fields=["brightness", "status"])
-                    broadcast_device_status(fan.device_id, status, fan.device_name, normalized)
+                fan_type = (getattr(fan.type, "name_type", "") or "").lower()
+                if fan_type != "fan":
+                    logger.warning("Skip fan sync: mapped fan actuator is type=%s (device=%s)", fan_type, fan.device_name)
+                else:
+                    # Protection: Skip if a command was recently sent
+                    now_ts = time.time()
+                    last_cmd = _last_actuator_command_times.get(str(fan.device_id), 0)
+                    stale_limit = int(getattr(settings, "COREIOT_ACTUATOR_STALE_SECONDS", 15))
+
+                    if now_ts - last_cmd < stale_limit:
+                        pass
+                    else:
+                        normalized = _normalize_percent(val)
+                        status = normalized > 0
+                        if fan.brightness != normalized or fan.status != status:
+                            fan.brightness = normalized
+                            fan.status = status
+                            fan.save(update_fields=["brightness", "status"])
+                            broadcast_device_status(fan.device_id, status, fan.device_name, normalized)
+
 
     # Sync Sensors
     if temperature_key in telemetry:
@@ -214,6 +240,7 @@ def _check_schedules() -> None:
                 success = client.set_brightness(coreiot_device_id, target_value)
 
             if success:
+                record_actuator_command(d.device_id)
                 d.status = target_status
                 d.brightness = target_value
                 d.save(update_fields=["status", "brightness"])
@@ -221,7 +248,8 @@ def _check_schedules() -> None:
 
 
 def run_forever(stop_event: threading.Event | None = None) -> None:
-    interval = max(1, int(getattr(settings, "COREIOT_SYNC_INTERVAL_SECONDS", 2)))
+    interval = max(0.2, float(getattr(settings, "COREIOT_SYNC_INTERVAL_SECONDS", 2)))
+
     logger.info("CoreIoT sync started (interval=%ss)", interval)
 
     while True:

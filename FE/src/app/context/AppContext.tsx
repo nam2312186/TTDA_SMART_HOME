@@ -219,6 +219,7 @@ interface AppContextType {
   historyLogs: HistoryLog[];
   users: User[];
   auditLogs: AuditLog[];
+  deviceTypes: any[];
   
   // Helper functions
   canAccessRoom: (roomId: string) => boolean;
@@ -252,6 +253,8 @@ interface AppContextType {
   deleteDevice: (deviceId: string) => void;
   addHome: (home: Omit<Home, 'id' | 'createdAt'>) => void;
   addAuditLog: (log: Omit<AuditLog, 'id' | 'timestamp'>) => void;
+  isLoading: boolean;
+  refreshAll: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -283,10 +286,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [allDevices, setAllDevices] = useState<Device[]>([]);
   const [deviceTypes, setDeviceTypes] = useState<any[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const [allSchedules, setSchedules] = useState<Schedule[]>([]);
   const [historyLogs, setHistoryLogs] = useState<HistoryLog[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [allAuditLogs, setAllAuditLogs] = useState<AuditLog[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const brightnessSyncTimersRef = useRef<Record<string, number>>({});
   const devicesSnapshotRef = useRef<Device[]>([]);
   const roomsSnapshotRef = useRef<Room[]>([]);
@@ -352,6 +356,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }));
   }, []);
 
+
   // ─── Fetch all data from API ─────────────────────────────────────────────────
   const fetchAll = useCallback(async () => {
     try {
@@ -413,6 +418,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       console.error('fetchAll error', e);
     }
   }, []);
+
+  const refreshAll = useCallback(async () => {
+    await fetchAll();
+  }, [fetchAll]);
 
   useEffect(() => {
     fetchAll();
@@ -521,6 +530,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const addAlertFromEvent = (eventData: any) => {
       const deviceId = String(eventData?.device_id || '');
       const matchedDevice = devicesSnapshotRef.current.find((d) => d.id === deviceId);
+      // Enforce room ownership on realtime alerts: skip alerts for inaccessible devices.
+      if (!matchedDevice) return;
       const matchedRoom = matchedDevice
         ? roomsSnapshotRef.current.find((r) => r.id === matchedDevice.roomId)
         : undefined;
@@ -840,7 +851,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
-  const updateDeviceThreshold = (deviceId: string, min?: number, max?: number, requireMotion: boolean = true) => {
+  const updateDeviceThreshold = (deviceId: string, min?: number, max?: number, requireMotion: boolean = false) => {
     const device = allDevices.find((d) => d.id === deviceId);
     const threshold = device?.threshold;
     const payload = {
@@ -935,7 +946,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const toggleSchedule = async (scheduleId: string) => {
-    const s = schedules.find(s => s.id === scheduleId);
+    const s = allSchedules.find(s => s.id === scheduleId);
     if (!s) return;
     await updateSchedule(scheduleId, { enabled: !s.enabled });
   };
@@ -1081,6 +1092,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     ]);
   };
 
+
   const contextValue = useMemo(
     () => ({
       currentUser,
@@ -1089,14 +1101,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       loginContext,
       logout,
       homes,
-      floors,
-      rooms,
-      devices,
+      floors: allFloors,
+      rooms: allRooms,
+      devices: allDevices,
       alerts,
-      schedules,
+      schedules: allSchedules,
       historyLogs,
       users,
-      auditLogs,
+      auditLogs: allAuditLogs,
+      deviceTypes,
       canAccessRoom,
       canAccessDevice,
       toggleDevice,
@@ -1126,9 +1139,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       deleteDevice,
       addHome,
       addAuditLog,
+      isLoading,
+      refreshAll,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [currentUser, isAdmin, homes, floors, rooms, devices, alerts, schedules, historyLogs, users, auditLogs]
+    [currentUser, isAdmin, homes, allFloors, allRooms, allDevices, alerts, allSchedules, historyLogs, users, allAuditLogs, deviceTypes, isLoading, refreshAll]
   );
 
   return (

@@ -4,17 +4,62 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from logs_app.utils import create_activity_log
+from users_app.models import User
+from building_app.models import RoomManagement
 
 from .models import Schedule, AutomationRule, IsMonitor
 from .serializers import ScheduleSerializer, AutomationRuleSerializer, IsMonitorSerializer
 
 
+def _resolve_request_user(request):
+    raw_uid = request.headers.get('X-User-Id')
+    if not raw_uid:
+        return None
+    try:
+        return User.objects.select_related('role_id').filter(pk=int(raw_uid)).first()
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_admin(user):
+    return bool(user and user.role_id and user.role_id.role_name == 'admin')
+
+
+def _require_authenticated(request):
+    user = _resolve_request_user(request)
+    if not user:
+        return None, Response({'error': 'X-User-Id is required'}, status=status.HTTP_401_UNAUTHORIZED)
+    return user, None
+
+
+def _can_access_room(user, room_id):
+    if _is_admin(user):
+        return True
+    return RoomManagement.objects.filter(user=user, room_id=room_id).exists()
+
+
 class ScheduleListView(APIView):
     def get(self, request):
+        user, error = _require_authenticated(request)
+        if error:
+            return error
+
         schedules = Schedule.objects.select_related('room', 'room__floor').all()
+        if not _is_admin(user):
+            allowed_room_ids = RoomManagement.objects.filter(user=user).values_list('room_id', flat=True)
+            schedules = schedules.filter(room_id__in=allowed_room_ids)
+
         return Response(ScheduleSerializer(schedules, many=True).data)
 
     def post(self, request):
+        user, error = _require_authenticated(request)
+        if error:
+            return error
+
+        room_id = request.data.get('room')
+        if room_id and not _can_access_room(user, room_id):
+            return Response({'error': 'Permission denied for this room'}, status=status.HTTP_403_FORBIDDEN)
+
         serializer = ScheduleSerializer(data=request.data)
         if serializer.is_valid():
             schedule = serializer.save()
@@ -29,11 +74,29 @@ class ScheduleListView(APIView):
 
 class ScheduleDetailView(APIView):
     def get(self, request, pk):
+        user, error = _require_authenticated(request)
+        if error:
+            return error
+
         schedule = get_object_or_404(Schedule.objects.select_related('room', 'room__floor'), pk=pk)
+        if schedule.room_id and not _can_access_room(user, schedule.room_id):
+            return Response({'error': 'Permission denied for this schedule'}, status=status.HTTP_403_FORBIDDEN)
+
         return Response(ScheduleSerializer(schedule).data)
 
     def put(self, request, pk):
+        user, error = _require_authenticated(request)
+        if error:
+            return error
+
         schedule = get_object_or_404(Schedule, pk=pk)
+        if schedule.room_id and not _can_access_room(user, schedule.room_id):
+            return Response({'error': 'Permission denied for this schedule'}, status=status.HTTP_403_FORBIDDEN)
+
+        target_room_id = request.data.get('room', schedule.room_id)
+        if target_room_id and not _can_access_room(user, target_room_id):
+            return Response({'error': 'Permission denied for target room'}, status=status.HTTP_403_FORBIDDEN)
+
         serializer = ScheduleSerializer(schedule, data=request.data, partial=True)
         if serializer.is_valid():
             updated = serializer.save()
@@ -46,7 +109,14 @@ class ScheduleDetailView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, pk):
+        user, error = _require_authenticated(request)
+        if error:
+            return error
+
         schedule = get_object_or_404(Schedule, pk=pk)
+        if schedule.room_id and not _can_access_room(user, schedule.room_id):
+            return Response({'error': 'Permission denied for this schedule'}, status=status.HTTP_403_FORBIDDEN)
+
         create_activity_log(
             request=request,
             action='schedule_deleted',

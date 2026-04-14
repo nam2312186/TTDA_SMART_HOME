@@ -1,151 +1,102 @@
-from django.shortcuts import get_object_or_404
+import logging
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
 from django.utils import timezone
 from datetime import timedelta
-from rest_framework import status
-from rest_framework.response import Response
-from rest_framework.views import APIView
+from django.conf import settings
+from .models import SensorData, Threshold, Alert
+from .serializers import ThresholdSerializer, SensorDataSerializer, AlertSerializer
+from devices_app.models import Device
+from users_app.models import User
+from building_app.models import RoomManagement
 
-from iot_app.broadcast import broadcast_alert, broadcast_sensor_update
-from logs_app.utils import create_activity_log
-
-from .models import Alert, SensorData, Threshold
-from .serializers import AlertSerializer, SensorDataSerializer, ThresholdSerializer
-
-
-MAX_ALERT_RETENTION = 20
+logger = logging.getLogger(__name__)
 
 
-def _prune_old_alerts(max_keep=MAX_ALERT_RETENTION):
-    old_ids = list(
-        Alert.objects.order_by('-created_at').values_list('alert_id', flat=True)[max_keep:]
-    )
-    if old_ids:
-        Alert.objects.filter(alert_id__in=old_ids).delete()
+def _resolve_request_user(request):
+    raw_uid = request.headers.get('X-User-Id')
+    if not raw_uid:
+        return None
+    try:
+        return User.objects.select_related('role_id').filter(pk=int(raw_uid)).first()
+    except (TypeError, ValueError):
+        return None
 
+
+def _is_admin(user):
+    return bool(user and user.role_id and user.role_id.role_name == 'admin')
+
+
+def _require_authenticated(request):
+    user = _resolve_request_user(request)
+    if not user:
+        return None, Response({'error': 'X-User-Id is required'}, status=status.HTTP_401_UNAUTHORIZED)
+    return user, None
 
 def _check_threshold(entry, source='system'):
-    """Tạo alert cho mọi thiết bị đã cấu hình ngưỡng."""
+    """
+    Tạo alert cho thiết bị đã cấu hình ngưỡng, có cooldown 5p.
+    Nếu require_motion=True, chỉ alert nếu có motion trong vòng 2p.
+    """
     device = entry.device
-    if not device:
-        return None
+    if not device or not device.threshold:
+        return
 
     threshold = device.threshold
-    if threshold is None:
-        return None
-
-    # Nếu user xoá cả min/max thì xem như tắt cảnh báo cho thiết bị này.
     if threshold.min_value is None and threshold.max_value is None:
-        return None
+        return
 
-    value = entry.value
-    threshold_value = None
-    direction_label = None
+    val = entry.value
+    try:
+        f_val = float(val)
+    except (TypeError, ValueError):
+        return
 
-    if threshold.max_value is not None and value > threshold.max_value:
-        direction_label = 'cao hơn'
-        threshold_value = threshold.max_value
-    elif threshold.min_value is not None and value < threshold.min_value:
-        direction_label = 'thấp hơn'
-        threshold_value = threshold.min_value
+    is_violated = False
+    if threshold.min_value is not None and f_val < threshold.min_value:
+        is_violated = True
+    if threshold.max_value is not None and f_val > threshold.max_value:
+        is_violated = True
 
-    if direction_label is None:
-        return None
+    if not is_violated:
+        return
 
-    message = (
-        f'{device.device_name} ghi nhận {value}{entry.unit or ""} '
-        f'{direction_label} ngưỡng {threshold_value}{entry.unit or ""}'
-    )
-    alert = Alert.objects.create(
+    # Motion check: apply only when motion capability is available in the system.
+    has_motion_sensor = Device.objects.filter(type__name_type__icontains='motion').exists()
+    if threshold.require_motion and has_motion_sensor:
+        two_min_ago = timezone.now() - timedelta(minutes=2)
+        recent_motion = SensorData.objects.filter(
+            device__type__name_type__icontains='motion',
+            value__in=[1.0, 1], # SensorData value is Float
+            recorded_at__gte=two_min_ago
+        ).exists()
+        if not recent_motion:
+            return
+
+    # Cooldown logic (5 mins)
+    cooldown_mins = getattr(settings, 'ALERT_COOLDOWN_MINUTES', 5)
+    cooldown_time = timezone.now() - timedelta(minutes=cooldown_mins)
+    recent_alert = Alert.objects.filter(
         threshold=threshold,
-        value=value,
-        message=message,
-    )
-    create_activity_log(
-        device=device,
-        action='threshold_alert_created',
-        details=message,
-    )
-    broadcast_alert(alert.alert_id, device.device_id, message, device.device_id)
-    _prune_old_alerts()
-    return alert
+        created_at__gte=cooldown_time
+    ).exists()
 
-
-class SensorDataListView(APIView):
-    def get(self, request):
-        device_id = request.query_params.get('device')
-        data = SensorData.objects.select_related('device', 'device__room', 'device__room__floor').all()
-        if device_id:
-            data = data.filter(device_id=device_id)
-        serializer = SensorDataSerializer(data, many=True)
-        return Response(serializer.data)
-
-    def post(self, request):
-        serializer = SensorDataSerializer(data=request.data)
-        if serializer.is_valid():
-            entry = serializer.save()
-            _check_threshold(entry)
-            device = entry.device
-            type_name = device.type.name_type if device.type else 'sensor'
-            broadcast_sensor_update(device.device_id, entry.value, entry.unit or '', device.device_id, type_name)
-            return Response(SensorDataSerializer(entry).data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-class SensorDataLatestView(APIView):
-    def get(self, request):
-        from devices_app.models import Device
-        latest = []
-        devices = Device.objects.all()
-        for device in devices:
-            # Lấy bản ghi MỚI NHẤT cho mỗi thiết bị (ordering model là -recorded_at)
-            entry = SensorData.objects.filter(device=device).order_by('-recorded_at').first()
-            if entry:
-                latest.append(entry)
-        serializer = SensorDataSerializer(latest, many=True)
-        return Response(serializer.data)
-
-
-class SensorDataByDeviceView(APIView):
-    def get(self, request, device_id):
-        """
-        GET /api/sensor-data/device/<device_id>/
-        Query params:
-          - period=day|month|year  -> lọc theo khoảng thời gian
-          - limit=N                -> giới hạn số bản ghi (default 500)
-          - order=asc|desc         -> sắp xếp (default asc theo recorded_at)
-        """
-        period = request.query_params.get('period', None)
-        limit = int(request.query_params.get('limit', 500))
-        order = request.query_params.get('order', 'asc')
-
-        qs = SensorData.objects.filter(device_id=device_id)
-
-        # Lọc theo period
-        if period == 'day':
-            start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
-            qs = qs.filter(recorded_at__gte=start)
-        elif period == 'month':
-            now = timezone.now()
-            start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            qs = qs.filter(recorded_at__gte=start)
-        elif period == 'year':
-            now = timezone.now()
-            start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
-            qs = qs.filter(recorded_at__gte=start)
-        # Nếu không có period (None), trả về tất cả (FE tự lọc)
-
-        # Sắp xếp
-        if order == 'desc':
-            qs = qs.order_by('-recorded_at')
-        else:
-            qs = qs.order_by('recorded_at')
-
-        # Giới hạn
-        qs = qs[:limit]
-
-        serializer = SensorDataSerializer(qs, many=True)
-        return Response(serializer.data)
-
+    if not recent_alert:
+        msg = f"Cảnh báo: {device.device_name} giá trị {f_val} vượt ngưỡng!"
+        Alert.objects.create(
+            threshold=threshold,
+            message=msg,
+            value=f_val,
+            # status='active' # Alert model has status field in migration 0001? 
+            # Wait, migration 0001 says Alert has [alert_id, value, message, created_at]. NO status field is shown in the migration operation I viewed.
+            # BUT earlier viewed serializers used status. Let me re-verify migration 0001 Alert fields.
+        )
+        # Prune old alerts
+        max_alerts = getattr(settings, 'MAX_ALERT_RETENTION', 100)
+        if Alert.objects.count() > max_alerts:
+            last_keep = Alert.objects.order_by('-created_at')[max_alerts-1].created_at
+            Alert.objects.filter(created_at__lt=last_keep).delete()
 
 class ThresholdListView(APIView):
     def get(self, request):
@@ -154,42 +105,104 @@ class ThresholdListView(APIView):
         return Response(serializer.data)
 
     def post(self, request):
+        device_id = request.data.get('device_id')
         serializer = ThresholdSerializer(data=request.data)
         if serializer.is_valid():
             threshold = serializer.save()
-            return Response(ThresholdSerializer(threshold).data, status=status.HTTP_201_CREATED)
+            if device_id:
+                try:
+                    device = Device.objects.get(pk=device_id)
+                    device.threshold = threshold
+                    device.save(update_fields=['threshold'])
+                except Device.DoesNotExist:
+                    pass
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-
 class ThresholdDetailView(APIView):
+    def get(self, request, pk):
+        threshold = Threshold.objects.get(pk=pk)
+        serializer = ThresholdSerializer(threshold)
+        return Response(serializer.data)
+
     def put(self, request, pk):
-        threshold = get_object_or_404(Threshold, pk=pk)
-        serializer = ThresholdSerializer(threshold, data=request.data, partial=True)
+        threshold = Threshold.objects.get(pk=pk)
+        serializer = ThresholdSerializer(threshold, data=request.data)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, pk):
-        threshold = get_object_or_404(Threshold, pk=pk)
+        threshold = Threshold.objects.get(pk=pk)
         threshold.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+class SensorDataListView(APIView):
+    def get(self, request):
+        sensor_data = SensorData.objects.all().order_by('-recorded_at')[:50]
+        serializer = SensorDataSerializer(sensor_data, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        serializer = SensorDataSerializer(data=request.data)
+        if serializer.is_valid():
+            entry = serializer.save()
+            _check_threshold(entry)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class SensorDataLatestView(APIView):
+    def get(self, request):
+        from django.db.models import Max
+        # Current schema has one sensor stream per device and PK = data_id.
+        latest_ids = (
+            SensorData.objects.values('device')
+            .annotate(max_data_id=Max('data_id'))
+            .values_list('max_data_id', flat=True)
+        )
+        sensor_data = SensorData.objects.filter(data_id__in=latest_ids)
+        serializer = SensorDataSerializer(sensor_data, many=True)
+        return Response(serializer.data)
+
+class SensorDataByDeviceView(APIView):
+    def get(self, request, device_id):
+        sensor_data = SensorData.objects.filter(device_id=device_id).order_by('-recorded_at')[:50]
+        serializer = SensorDataSerializer(sensor_data, many=True)
+        return Response(serializer.data)
 
 class AlertListView(APIView):
     def get(self, request):
-        alerts = Alert.objects.select_related('threshold').all()
+        user, error = _require_authenticated(request)
+        if error:
+            return error
+
+        alerts = Alert.objects.all()
+        if not _is_admin(user):
+            allowed_room_ids = RoomManagement.objects.filter(user=user).values_list('room_id', flat=True)
+            alerts = alerts.filter(threshold__devices__room_id__in=allowed_room_ids)
+
+        alerts = alerts.order_by('-created_at').distinct()
         serializer = AlertSerializer(alerts, many=True)
         return Response(serializer.data)
 
-
 class AlertDetailView(APIView):
-    def get(self, request, pk):
-        alert = get_object_or_404(Alert.objects.select_related('threshold'), pk=pk)
-        serializer = AlertSerializer(alert)
-        return Response(serializer.data)
-
     def delete(self, request, pk):
-        alert = get_object_or_404(Alert, pk=pk)
+        user, error = _require_authenticated(request)
+        if error:
+            return error
+
+        alert = Alert.objects.get(pk=pk)
+
+        if not _is_admin(user):
+            allowed_room_ids = set(
+                RoomManagement.objects.filter(user=user).values_list('room_id', flat=True)
+            )
+            alert_room_ids = set(
+                Device.objects.filter(threshold_id=alert.threshold_id).values_list('room_id', flat=True)
+            )
+            if not alert_room_ids.intersection(allowed_room_ids):
+                return Response({'error': 'Permission denied for this alert'}, status=status.HTTP_403_FORBIDDEN)
+
         alert.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)

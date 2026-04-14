@@ -8,12 +8,51 @@ from rest_framework.views import APIView
 
 from iot_app.broadcast import broadcast_device_status
 from iot_app.coreiot_client import CoreIoTClient
+from iot_app.coreiot_sync import record_actuator_command
 from logs_app.utils import create_activity_log
+from users_app.models import User
+from building_app.models import RoomManagement
 
 from .models import Device, DeviceType
 from .serializers import DeviceSerializer, DeviceTypeSerializer
 
 logger = logging.getLogger('devices_app')
+
+
+def _resolve_request_user(request):
+    raw_uid = request.headers.get('X-User-Id')
+    if not raw_uid:
+        return None
+    try:
+        return User.objects.select_related('role_id').filter(pk=int(raw_uid)).first()
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_admin(user):
+    return bool(user and user.role_id and user.role_id.role_name == 'admin')
+
+
+def _require_authenticated(request):
+    user = _resolve_request_user(request)
+    if not user:
+        return None, Response({'error': 'X-User-Id is required'}, status=status.HTTP_401_UNAUTHORIZED)
+    return user, None
+
+
+def _require_admin(request):
+    user, error = _require_authenticated(request)
+    if error:
+        return None, error
+    if not _is_admin(user):
+        return None, Response({'error': 'Only admin can modify devices'}, status=status.HTTP_403_FORBIDDEN)
+    return user, None
+
+
+def _can_access_device(user, device):
+    if _is_admin(user):
+        return True
+    return RoomManagement.objects.filter(user=user, room_id=device.room_id).exists()
 
 
 class DeviceTypeListView(APIView):
@@ -31,11 +70,22 @@ class DeviceTypeListView(APIView):
 
 class DeviceListView(APIView):
     def get(self, request):
+        user, error = _require_authenticated(request)
+        if error:
+            return error
+
         devices = Device.objects.select_related('room', 'room__floor', 'type', 'threshold').all()
+        if not _is_admin(user):
+            allowed_room_ids = RoomManagement.objects.filter(user=user).values_list('room_id', flat=True)
+            devices = devices.filter(room_id__in=allowed_room_ids)
+
         serializer = DeviceSerializer(devices, many=True)
         return Response(serializer.data)
 
     def post(self, request):
+        _, error = _require_admin(request)
+        if error:
+            return error
         serializer = DeviceSerializer(data=request.data)
         if serializer.is_valid():
             device = serializer.save()
@@ -51,11 +101,19 @@ class DeviceListView(APIView):
 
 class DeviceDetailView(APIView):
     def get(self, request, pk):
+        user, error = _require_authenticated(request)
+        if error:
+            return error
         device = get_object_or_404(Device.objects.select_related('room', 'room__floor', 'type', 'threshold'), pk=pk)
+        if not _can_access_device(user, device):
+            return Response({'error': 'Permission denied for this device'}, status=status.HTTP_403_FORBIDDEN)
         serializer = DeviceSerializer(device)
         return Response(serializer.data)
 
     def put(self, request, pk):
+        _, error = _require_admin(request)
+        if error:
+            return error
         device = get_object_or_404(Device, pk=pk)
         old_name = device.device_name
         serializer = DeviceSerializer(device, data=request.data, partial=True)
@@ -71,6 +129,9 @@ class DeviceDetailView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, pk):
+        _, error = _require_admin(request)
+        if error:
+            return error
         device = get_object_or_404(Device, pk=pk)
         device_name = device.device_name
         room_name = device.room.room_name if device.room else 'N/A'
@@ -86,6 +147,13 @@ class DeviceDetailView(APIView):
 
 class RoomDeviceListView(APIView):
     def get(self, request, room_id):
+        user, error = _require_authenticated(request)
+        if error:
+            return error
+
+        if not _is_admin(user) and not RoomManagement.objects.filter(user=user, room_id=room_id).exists():
+            return Response({'error': 'Permission denied for this room'}, status=status.HTTP_403_FORBIDDEN)
+
         devices = Device.objects.select_related('room', 'room__floor', 'type', 'threshold').filter(room_id=room_id)
         serializer = DeviceSerializer(devices, many=True)
         return Response(serializer.data)
@@ -93,7 +161,12 @@ class RoomDeviceListView(APIView):
 
 class DeviceTurnOnView(APIView):
     def post(self, request, pk):
+        user, error = _require_authenticated(request)
+        if error:
+            return error
         device = get_object_or_404(Device, pk=pk)
+        if not _can_access_device(user, device):
+            return Response({'error': 'Permission denied for this device'}, status=status.HTTP_403_FORBIDDEN)
 
         device_type = getattr(device.type, 'name_type', '')
         if device_type in ('light', 'fan') and getattr(settings, 'COREIOT_ENABLED', False):
@@ -118,6 +191,7 @@ class DeviceTurnOnView(APIView):
                     status=status.HTTP_502_BAD_GATEWAY,
                 )
 
+            record_actuator_command(device.device_id)
             device.brightness = publish_value
 
         device.status = True
@@ -135,7 +209,12 @@ class DeviceTurnOnView(APIView):
 
 class DeviceTurnOffView(APIView):
     def post(self, request, pk):
+        user, error = _require_authenticated(request)
+        if error:
+            return error
         device = get_object_or_404(Device, pk=pk)
+        if not _can_access_device(user, device):
+            return Response({'error': 'Permission denied for this device'}, status=status.HTTP_403_FORBIDDEN)
 
         device_type = getattr(device.type, 'name_type', '')
         if device_type in ('light', 'fan') and getattr(settings, 'COREIOT_ENABLED', False):
@@ -159,6 +238,8 @@ class DeviceTurnOffView(APIView):
                     status=status.HTTP_502_BAD_GATEWAY,
                 )
 
+            record_actuator_command(device.device_id)
+
         device.status = False
         device.save(update_fields=['status'])
         create_activity_log(
@@ -174,7 +255,12 @@ class DeviceTurnOffView(APIView):
 
 class DeviceToggleView(APIView):
     def post(self, request, pk):
+        user, error = _require_authenticated(request)
+        if error:
+            return error
         device = get_object_or_404(Device, pk=pk)
+        if not _can_access_device(user, device):
+            return Response({'error': 'Permission denied for this device'}, status=status.HTTP_403_FORBIDDEN)
 
         next_status = not device.status
         device_type = getattr(device.type, 'name_type', '')
@@ -203,6 +289,8 @@ class DeviceToggleView(APIView):
                     status=status.HTTP_502_BAD_GATEWAY,
                 )
 
+            record_actuator_command(device.device_id)
+
             if next_status:
                 device.brightness = publish_value
 
@@ -222,7 +310,12 @@ class DeviceToggleView(APIView):
 
 class DeviceBrightnessView(APIView):
     def post(self, request, pk):
+        user, error = _require_authenticated(request)
+        if error:
+            return error
         device = get_object_or_404(Device, pk=pk)
+        if not _can_access_device(user, device):
+            return Response({'error': 'Permission denied for this device'}, status=status.HTTP_403_FORBIDDEN)
         
         if device.type.name_type != 'light':
             return Response(
@@ -274,6 +367,7 @@ class DeviceBrightnessView(APIView):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
         
+        record_actuator_command(device.device_id)
         is_on = publish_value > 0
         device.brightness = publish_value
         device.status = is_on
@@ -297,7 +391,12 @@ class DeviceBrightnessView(APIView):
 
 class DeviceFanSpeedView(APIView):
     def post(self, request, pk):
+        user, error = _require_authenticated(request)
+        if error:
+            return error
         device = get_object_or_404(Device, pk=pk)
+        if not _can_access_device(user, device):
+            return Response({'error': 'Permission denied for this device'}, status=status.HTTP_403_FORBIDDEN)
         
         if device.type.name_type != 'fan':
             return Response(
@@ -348,6 +447,7 @@ class DeviceFanSpeedView(APIView):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
         
+        record_actuator_command(device.device_id)
         is_on = publish_value > 0
         device.brightness = publish_value  # Store 0-100 directly
         device.status = is_on

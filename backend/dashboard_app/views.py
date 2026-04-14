@@ -3,12 +3,15 @@ from collections import defaultdict
 from django.db.models import Avg, Count, Q
 from django.db.models.functions import TruncDay, TruncMonth, TruncYear
 from rest_framework.response import Response
+from rest_framework import status
 from rest_framework.views import APIView
 
 from building_app.models import Floor, Room
+from building_app.models import RoomManagement
 from devices_app.models import Device
 from logs_app.models import ActivityLog
 from monitoring_app.models import Alert, SensorData
+from users_app.models import User
 
 
 PERIOD_MAP = {
@@ -18,19 +21,63 @@ PERIOD_MAP = {
 }
 
 
+def _resolve_request_user(request):
+    raw_uid = request.headers.get('X-User-Id')
+    if not raw_uid:
+        return None
+    try:
+        return User.objects.select_related('role_id').filter(pk=int(raw_uid)).first()
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_admin(user):
+    return bool(user and user.role_id and user.role_id.role_name == 'admin')
+
+
+def _require_authenticated(request):
+    user = _resolve_request_user(request)
+    if not user:
+        return None, Response({'error': 'X-User-Id is required'}, status=status.HTTP_401_UNAUTHORIZED)
+    return user, None
+
+
+def _allowed_room_ids(user):
+    if _is_admin(user):
+        return None
+    return RoomManagement.objects.filter(user=user).values_list('room_id', flat=True)
+
+
 class DashboardSummaryView(APIView):
     def get(self, request):
-        total_devices = Device.objects.count()
-        devices_on = Device.objects.filter(status=True).count()
-        active_alerts = Alert.objects.count()
+        user, error = _require_authenticated(request)
+        if error:
+            return error
+
+        allowed_room_ids = _allowed_room_ids(user)
+
+        device_qs = Device.objects.all()
+        alert_qs = Alert.objects.all()
+        floors_qs = Floor.objects.order_by('floor_id')
+        rooms_qs = Room.objects.all()
+
+        if allowed_room_ids is not None:
+            device_qs = device_qs.filter(room_id__in=allowed_room_ids)
+            alert_qs = alert_qs.filter(threshold__devices__room_id__in=allowed_room_ids).distinct()
+            floors_qs = floors_qs.filter(rooms__room_id__in=allowed_room_ids).distinct()
+            rooms_qs = rooms_qs.filter(room_id__in=allowed_room_ids)
+
+        total_devices = device_qs.count()
+        devices_on = device_qs.filter(status=True).count()
+        active_alerts = alert_qs.count()
 
         floor_stats = []
         room_stats = []
-        floors = Floor.objects.order_by('floor_id')
+        floors = floors_qs
         for floor in floors:
-            floor_rooms = Room.objects.filter(floor=floor)
+            floor_rooms = rooms_qs.filter(floor=floor)
             room_count = floor_rooms.count()
-            device_count = Device.objects.filter(room__floor=floor).count()
+            device_count = device_qs.filter(room__floor=floor).count()
             floor_stats.append({
                 'floor_id': floor.floor_id,
                 'floor_name': floor.floor_name,
@@ -60,9 +107,20 @@ class DashboardMetricView(APIView):
     metric_name = ''
 
     def get(self, request):
+        user, error = _require_authenticated(request)
+        if error:
+            return error
+
+        allowed_room_ids = _allowed_room_ids(user)
         sensor_data = SensorData.objects.select_related('device', 'device__room', 'device__room__floor').filter(device__type__name_type=self.metric_name)
+        devices_qs = Device.objects.select_related('room', 'room__floor', 'type').filter(type__name_type=self.metric_name)
+
+        if allowed_room_ids is not None:
+            sensor_data = sensor_data.filter(device__room_id__in=allowed_room_ids)
+            devices_qs = devices_qs.filter(room_id__in=allowed_room_ids)
+
         result = []
-        for device in Device.objects.select_related('room', 'room__floor', 'type').filter(type__name_type=self.metric_name):
+        for device in devices_qs:
             records = sensor_data.filter(device=device).order_by('-recorded_at')[:24]
             result.append({
                 'device_id': device.device_id,
@@ -91,7 +149,15 @@ class DashboardLightView(DashboardMetricView):
 
 class DashboardDeviceStatusView(APIView):
     def get(self, request):
+        user, error = _require_authenticated(request)
+        if error:
+            return error
+
         devices = Device.objects.select_related('room', 'room__floor', 'type').all()
+        allowed_room_ids = _allowed_room_ids(user)
+        if allowed_room_ids is not None:
+            devices = devices.filter(room_id__in=allowed_room_ids)
+
         return Response([
             {
                 'device_id': device.device_id,
@@ -108,6 +174,10 @@ class DashboardDeviceStatusView(APIView):
 
 class DashboardAnalyticsView(APIView):
     def get(self, request):
+        user, error = _require_authenticated(request)
+        if error:
+            return error
+
         scope = request.query_params.get('scope', 'floor')
         metric = request.query_params.get('metric', 'temperature')
         period = request.query_params.get('period', 'day')
@@ -120,9 +190,12 @@ class DashboardAnalyticsView(APIView):
 
         trunc = PERIOD_MAP[period]
         records_by_scope = defaultdict(list)
+        allowed_room_ids = _allowed_room_ids(user)
 
         if metric == 'device_activity':
             logs = ActivityLog.objects.select_related('device', 'device__room', 'device__room__floor').filter(device__isnull=False)
+            if allowed_room_ids is not None:
+                logs = logs.filter(device__room_id__in=allowed_room_ids)
             grouped = logs.annotate(bucket=trunc('action_time')).values(
                 'bucket',
                 'device__room__room_id',
@@ -142,6 +215,8 @@ class DashboardAnalyticsView(APIView):
                 })
         else:
             data = SensorData.objects.select_related('device', 'device__room', 'device__room__floor').filter(device__type__name_type=metric)
+            if allowed_room_ids is not None:
+                data = data.filter(device__room_id__in=allowed_room_ids)
             grouped = data.annotate(bucket=trunc('recorded_at')).values(
                 'bucket',
                 'device__room__room_id',

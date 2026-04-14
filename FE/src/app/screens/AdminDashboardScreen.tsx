@@ -76,10 +76,12 @@ export const AdminDashboardScreen: React.FC<AdminDashboardScreenProps> = ({ onNa
         const key = String(message.device_id || message.sensor_id);
         const value = Number(message.value);
         if (!Number.isFinite(value)) return;
+        const targetDeviceId = Number(message.device_id || message.sensor_id);
+        if (!devices.some((device) => Number(device.id) === targetDeviceId)) return;
         setRealtime((prev) => ({
           ...prev,
           [key]: {
-            deviceId: Number(message.device_id || message.sensor_id),
+            deviceId: targetDeviceId,
             metric: message.metric || 'sensor',
             value,
             unit: message.unit || '',
@@ -106,7 +108,7 @@ export const AdminDashboardScreen: React.FC<AdminDashboardScreenProps> = ({ onNa
         refreshTimerRef.current = null;
       }
     };
-  }, [loadAnalytics]);
+  }, [devices, loadAnalytics]);
 
   const summaryCards = [
     {
