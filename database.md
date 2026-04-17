@@ -1,6 +1,6 @@
 # Smart Home IoT — Database Schema (Current)
 
-> Generated: 13/04/2026  
+> Generated: 17/04/2026  
 > Project: TTDA Smart Home (FE + BE + CoreIoT)
 
 ---
@@ -15,9 +15,9 @@ Table roles {
 // ─── USERS ────────────────────────────────────────────────────────────────────
 Table users {
   user_id    integer  [primary key]
-  username   varchar
+  username   varchar  [unique]
   password   varchar
-  email      varchar
+  email      varchar  [unique]
   created_at datetime
   role_id    integer
 }
@@ -25,14 +25,12 @@ Table users {
 Ref: users.role_id > roles.role_id
 
 // ─── FLOORS ───────────────────────────────────────────────────────────────────
-// Note: user_id removed — ownership tracked via room_managements
 Table floors {
   floor_id   integer [primary key]
   floor_name varchar
 }
 
 // ─── ROOMS ────────────────────────────────────────────────────────────────────
-// Note: user_id removed — per-user room access tracked via room_managements
 Table rooms {
   room_id   integer [primary key]
   room_name varchar
@@ -46,22 +44,20 @@ Table room_managements {
   id      integer [primary key]
   room_id integer
   user_id integer
+  
+  Note: "Composite Unique Index on (user_id, room_id)"
 }
 
 Ref: room_managements.room_id > rooms.room_id
 Ref: room_managements.user_id > users.user_id
 
 // ─── DEVICE TYPE ──────────────────────────────────────────────────────────────
-// Replaces device_type varchar inside devices.
-// Values: temperature, humidity, light, motion, fan, actuator, sensor, ...
 Table device_type {
   type_id   integer [primary key]
   name_type varchar
 }
 
 // ─── DEVICES ──────────────────────────────────────────────────────────────────
-// Sensors and actuators are unified in one table (no separate sensors table).
-// brightness stores PWM value (0–255) for both light and fan actuators.
 Table devices {
   device_id    integer [primary key]
   device_name  varchar
@@ -78,17 +74,14 @@ Ref: devices.room_id      > rooms.room_id
 Ref: devices.threshold_id > thresholds.threshold_id
 
 // ─── THRESHOLDS ───────────────────────────────────────────────────────────────
-// Linked directly from devices (no intermediate sensors table).
-// require_motion: if true, automation only triggers when motion is detected.
 Table thresholds {
   threshold_id   integer [primary key]
   min_value      float
   max_value      float
-  require_motion boolean   // default: true
+  require_motion boolean   // default: false
 }
 
 // ─── SENSOR DATA ──────────────────────────────────────────────────────────────
-// References device_id directly (sensors merged into devices table).
 Table sensor_data {
   data_id     integer  [primary key]
   device_id   integer
@@ -100,8 +93,6 @@ Table sensor_data {
 Ref: sensor_data.device_id > devices.device_id
 
 // ─── ALERTS ───────────────────────────────────────────────────────────────────
-// Triggered when sensor value crosses threshold.
-// threshold_id replaces sensor_id; is_read removed.
 Table alerts {
   alert_id     integer  [primary key]
   threshold_id integer
@@ -113,30 +104,28 @@ Table alerts {
 Ref: alerts.threshold_id > thresholds.threshold_id
 
 // ─── AUTOMATION RULES ─────────────────────────────────────────────────────────
-// Defines what action to take when a threshold fires.
 Table automation_rules {
   rule_id      integer [primary key]
   threshold_id integer
-  action       varchar   // e.g., 'turn_on', 'turn_off', 'toggle'
+  action       varchar   // e.g., 'turn_on_fan', 'turn_on_light', 'turn_off'
   status       boolean
 }
 
 Ref: automation_rules.threshold_id > thresholds.threshold_id
 
 // ─── IS_MONITOR (Monitor Mode) ────────────────────────────────────────────────
-// Maps a device to an automation rule in monitor mode.
-// Monitor mode = automation triggers even without motion presence.
 Table is_monitor {
   id        integer [primary key]
   device_id integer
   rule_id   integer
+  
+  Note: "Composite Unique Index on (device_id, rule_id)"
 }
 
 Ref: is_monitor.device_id > devices.device_id
 Ref: is_monitor.rule_id   > automation_rules.rule_id
 
 // ─── SCHEDULE ─────────────────────────────────────────────────────────────────
-// Note: now linked to room_id (not device_id like original schema).
 Table schedule {
   schedule_id   integer [primary key]
   room_id       integer
@@ -161,18 +150,31 @@ Ref: activity_log.user_id   > users.user_id
 Ref: activity_log.device_id > devices.device_id
 
 // ─── IOT TOKENS ───────────────────────────────────────────────────────────────
-// API tokens for IoT hardware authentication.
-Table iot_tokens {
+Table iot_app_iottoken {
   id         integer  [primary key]
-  device_id  integer
-  token      varchar
+  device_id  integer  [unique]
+  token      varchar  [unique]
   label      varchar
   is_active  boolean
   last_seen  datetime
   created_at datetime
 }
 
-Ref: iot_tokens.device_id > devices.device_id
+Ref: iot_app_iottoken.device_id - devices.device_id
+```
+
+---
+
+## Tóm tắt thay đổi so với bản nháp trước
+
+| # | Thay đổi | Chi tiết |
+|---|---|---|
+| 1 | **IoT Token Relation** | Chuyển quan hệ `iot_app_iottoken` <-> `devices` thành **1-to-1** (`-`) thay vì Many-to-One (`>`). |
+| 2 | **Table Name Sync** | Đổi tên bảng `iot_tokens` thành `iot_app_iottoken` để khớp 100% với tên bảng Django sinh ra. |
+| 3 | **Threshold Default** | Sửa mặc định `thresholds.require_motion` thành `false` (khớp `default=False` trong code). |
+| 4 | **Uniqueness Records** | Thêm ghi chú `unique` và `Composite Index` cho các bảng trung gian như `room_managements` và `is_monitor`. |
+| 5 | **Field Integrity** | Đảm bảo `users.username` và `users.email` có nhãn `[unique]`. |
+| 6 | **Automation Action** | Cập nhật ví dụ action trong `automation_rules` khớp với logic hiện tại. |
 ```
 
 ---
