@@ -61,25 +61,32 @@ const Trend = ({ value }: { value: number }) => {
   return <Minus className="w-3.5 h-3.5 text-slate-400" />;
 };
 
-// ─── aggregateByDay helper ─────────────────────────────────────────────────────
-function aggregateByDay(rows: any[]): Array<{ day: string; avg: number; min: number; max: number; count: number }> {
-  const map = new Map<string, { sum: number; min: number; max: number; count: number }>();
+// ─── aggregateByMinute helper ──────────────────────────────────────────────────
+function aggregateByMinute(rows: any[]): Array<{ minute: string; avg: number; min: number; max: number; count: number }> {
+  const map = new Map<string, { sum: number; min: number; max: number; count: number; minute: string; sort: number }>();
   rows.forEach((r) => {
     const dt = new Date(r.recorded_at || r.timestamp || r.created_at);
     if (isNaN(dt.getTime())) return;
-    const key = `${dt.getMonth() + 1}/${dt.getDate()}`;
+    const key = `${dt.getFullYear()}-${dt.getMonth()}-${dt.getDate()}-${dt.getHours()}-${dt.getMinutes()}`;
+    const minute = `${String(dt.getMonth() + 1).padStart(2, '0')}/${String(dt.getDate()).padStart(2, '0')} ${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
     const v = parseFloat(r.value);
     if (!isFinite(v)) return;
     const existing = map.get(key);
     if (existing) {
       existing.sum += v; existing.count++; existing.min = Math.min(existing.min, v); existing.max = Math.max(existing.max, v);
     } else {
-      map.set(key, { sum: v, count: 1, min: v, max: v });
+      map.set(key, { sum: v, count: 1, min: v, max: v, minute, sort: dt.getTime() });
     }
   });
-  return Array.from(map.entries()).map(([day, s]) => ({
-    day, avg: parseFloat((s.sum / s.count).toFixed(2)), min: parseFloat(s.min.toFixed(2)), max: parseFloat(s.max.toFixed(2)), count: s.count,
-  }));
+  return Array.from(map.values())
+    .sort((a, b) => a.sort - b.sort)
+    .map((s) => ({
+      minute: s.minute,
+      avg: parseFloat((s.sum / s.count).toFixed(2)),
+      min: parseFloat(s.min.toFixed(2)),
+      max: parseFloat(s.max.toFixed(2)),
+      count: s.count,
+    }));
 }
 
 // ─── aggregateByHour helper ────────────────────────────────────────────────────
@@ -133,36 +140,32 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({ onNavigate }) => {
   }, [devices]);
 
   // ─── Derived analytics ────────────────────────────────────────────────────
-  const tempByDay = useMemo(() => aggregateByDay(tempRows), [tempRows]);
-  const humByDay  = useMemo(() => aggregateByDay(humRows),  [humRows]);
+  const tempByMinute = useMemo(() => aggregateByMinute(tempRows), [tempRows]);
+  const humByMinute  = useMemo(() => aggregateByMinute(humRows),  [humRows]);
   const tempByHour = useMemo(() => aggregateByHour(tempRows), [tempRows]);
   const humByHour  = useMemo(() => aggregateByHour(humRows),  [humRows]);
 
   // Merge temp + hum by day for combo chart
   const comboData = useMemo(() => {
-    const tempMap = new Map(tempByDay.map(r => [r.day, r]));
-    const humMap  = new Map(humByDay.map(r => [r.day, r]));
-    const allDays = Array.from(new Set([...tempMap.keys(), ...humMap.keys()])).sort((a, b) => {
-      const [am, ad] = a.split('/').map(Number);
-      const [bm, bd] = b.split('/').map(Number);
-      return am !== bm ? am - bm : ad - bd;
-    });
-    return allDays.map(day => ({
-      day,
-      temp: tempMap.get(day)?.avg ?? null,
-      hum:  humMap.get(day)?.avg ?? null,
-      tempMin: tempMap.get(day)?.min ?? null,
-      tempMax: tempMap.get(day)?.max ?? null,
+    const tempMap = new Map(tempByMinute.map(r => [r.minute, r]));
+    const humMap  = new Map(humByMinute.map(r => [r.minute, r]));
+    const allMinutes = Array.from(new Set([...tempMap.keys(), ...humMap.keys()]));
+    return allMinutes.map(minute => ({
+      minute,
+      temp: tempMap.get(minute)?.avg ?? null,
+      hum:  humMap.get(minute)?.avg ?? null,
+      tempMin: tempMap.get(minute)?.min ?? null,
+      tempMax: tempMap.get(minute)?.max ?? null,
     }));
-  }, [tempByDay, humByDay]);
+  }, [tempByMinute, humByMinute]);
 
   // Scatter: temp vs hum for correlation
   const scatterData = useMemo(() => {
-    const tempMap = new Map(tempByDay.map(r => [r.day, r.avg]));
-    return humByDay
-      .filter(h => tempMap.has(h.day))
-      .map(h => ({ hum: h.avg, temp: tempMap.get(h.day)!, day: h.day }));
-  }, [tempByDay, humByDay]);
+    const tempMap = new Map(tempByMinute.map(r => [r.minute, r.avg]));
+    return humByMinute
+      .filter(h => tempMap.has(h.minute))
+      .map(h => ({ hum: h.avg, temp: tempMap.get(h.minute)!, minute: h.minute }));
+  }, [tempByMinute, humByMinute]);
 
   // Stats
   const tempVals = tempRows.map(r => parseFloat(r.value)).filter(isFinite);
@@ -383,9 +386,9 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({ onNavigate }) => {
                     <StatBadge label="Std Dev" value={tempStat.std} unit="" color="#8b5cf6" />
                   </div>
                   {/* Trend line: min/max range + avg */}
-                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Daily Min / Avg / Max</p>
+                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Per-minute Min / Avg / Max</p>
                   <ResponsiveContainer width="100%" height={160} style={{ overflow: 'visible' }}>
-                    <ComposedChart data={tempByDay} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                    <ComposedChart data={tempByMinute} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
                       <defs>
                         <linearGradient id="rngTemp" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="0%" stopColor="#f97316" stopOpacity={0.25} />
@@ -393,7 +396,7 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({ onNavigate }) => {
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                      <XAxis dataKey="day" tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+                      <XAxis dataKey="minute" tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
                       <YAxis tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={false} tickLine={false} domain={['auto', 'auto']} />
                       <Tooltip content={<DarkTooltip />} wrapperStyle={{ zIndex: 100 }} />
                       <Area type="monotone" dataKey="max" stroke="transparent" fill="url(#rngTemp)" name="Max °C" stackId="range" />
@@ -430,9 +433,9 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({ onNavigate }) => {
                     <StatBadge label="Max"     value={humStat.max} unit="%" color="#8b5cf6" />
                     <StatBadge label="Std Dev" value={humStat.std} unit="" color="#6366f1" />
                   </div>
-                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Daily Min / Avg / Max</p>
+                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Per-minute Min / Avg / Max</p>
                   <ResponsiveContainer width="100%" height={160} style={{ overflow: 'visible' }}>
-                    <ComposedChart data={humByDay} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                    <ComposedChart data={humByMinute} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
                       <defs>
                         <linearGradient id="rngHum" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.25} />
@@ -440,7 +443,7 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({ onNavigate }) => {
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                      <XAxis dataKey="day" tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+                      <XAxis dataKey="minute" tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
                       <YAxis tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={false} tickLine={false} domain={['auto', 'auto']} />
                       <Tooltip content={<DarkTooltip />} wrapperStyle={{ zIndex: 100 }} />
                       <Area type="monotone" dataKey="max" stroke="transparent" fill="url(#rngHum)" name="Max %" stackId="r" />
@@ -466,7 +469,7 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({ onNavigate }) => {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-bold flex items-center gap-2">
                 <span className="w-2 h-5 rounded-full" style={{ background: 'linear-gradient(180deg,#f97316,#3b82f6)' }} />
-                Temperature vs Humidity — Daily
+                Temperature vs Humidity — Per-minute
               </CardTitle>
             </CardHeader>
             <CardContent style={{ overflow: 'visible' }}>
@@ -483,7 +486,7 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({ onNavigate }) => {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                  <XAxis dataKey="day" tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={false} tickLine={false} interval={Math.floor(comboData.length / 6)} />
+                  <XAxis dataKey="minute" tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={false} tickLine={false} interval={Math.floor(comboData.length / 6)} />
                   <YAxis yAxisId="t" tick={{ fontSize: 9, fill: '#f97316' }} axisLine={false} tickLine={false} domain={['auto', 'auto']} tickFormatter={v => `${v}°`} />
                   <YAxis yAxisId="h" orientation="right" tick={{ fontSize: 9, fill: '#3b82f6' }} axisLine={false} tickLine={false} domain={['auto', 'auto']} tickFormatter={v => `${v}%`} />
                   <Tooltip content={<DarkTooltip />} wrapperStyle={{ zIndex: 100 }} />
@@ -551,7 +554,7 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({ onNavigate }) => {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-[11px] text-slate-400 mb-3">Each dot = 1 day. Pattern shows relationship between temperature &amp; humidity.</p>
+              <p className="text-[11px] text-slate-400 mb-3">Each dot = 1 minute bucket. Pattern shows relationship between temperature &amp; humidity.</p>
               <ResponsiveContainer width="100%" height={200} style={{ overflow: 'visible' }}>
                 <ScatterChart margin={{ top: 8, right: 16, left: -20, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -562,7 +565,7 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({ onNavigate }) => {
                     const d = payload[0].payload;
                     return (
                       <div className="rounded-xl px-3 py-2 text-xs shadow-xl" style={{ background: 'rgba(15,14,26,0.93)', color: '#fff', border: '1px solid rgba(255,255,255,0.08)' }}>
-                        <p className="font-semibold text-indigo-300 mb-1">{d.day}</p>
+                        <p className="font-semibold text-indigo-300 mb-1">{d.minute}</p>
                         <p>Temp: <strong>{d.temp}°C</strong></p>
                         <p>Hum: <strong>{d.hum}%</strong></p>
                       </div>
