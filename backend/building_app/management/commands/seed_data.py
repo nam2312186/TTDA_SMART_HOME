@@ -64,12 +64,23 @@ class Command(BaseCommand):
         type_light, _ = DeviceType.objects.get_or_create(name_type='light')
         type_fan, _ = DeviceType.objects.get_or_create(name_type='fan')
 
-        # --- Floor & Room (1 tang, 1 phong demo IoT) ---
+        # --- Floors & Rooms (3 floors layout) ---
         floor1, _ = Floor.objects.get_or_create(floor_name='Floor 1 - Demo')
-        living_room, _ = Room.objects.get_or_create(room_name='Demo Room', floor=floor1)
+        floor2, _ = Floor.objects.get_or_create(floor_name='Floor 2 - Demo')
+        floor3, _ = Floor.objects.get_or_create(floor_name='Floor 3 - Demo')
+
+        room_1a, _ = Room.objects.get_or_create(room_name='Demo Room 1A', floor=floor1)
+        room_1b, _ = Room.objects.get_or_create(room_name='Demo Room 1B', floor=floor1)
+        room_2a, _ = Room.objects.get_or_create(room_name='Demo Room 2A', floor=floor2)
+        room_3a, _ = Room.objects.get_or_create(room_name='Demo Room 3A', floor=floor3)
+        sensor_room, _ = Room.objects.get_or_create(room_name='Demo Room', floor=floor1)
 
         # --- Room Management ---
-        RoomManagement.objects.get_or_create(user=normal_user, room=living_room)
+        RoomManagement.objects.get_or_create(user=normal_user, room=room_1a)
+        RoomManagement.objects.get_or_create(user=normal_user, room=room_1b)
+        RoomManagement.objects.get_or_create(user=normal_user, room=room_2a)
+        RoomManagement.objects.get_or_create(user=normal_user, room=room_3a)
+        RoomManagement.objects.get_or_create(user=normal_user, room=sensor_room)
 
         # --- Thresholds (standalone, tao truoc device) ---
         temp_threshold, _ = Threshold.objects.get_or_create(
@@ -83,26 +94,44 @@ class Command(BaseCommand):
         )
 
         # --- Devices ---
+        light_device_1, _ = Device.objects.update_or_create(
+            device_name='Demo Light 1',
+            defaults={'type': type_light, 'room': room_1a, 'status': False, 'threshold': None},
+        )
+        fan_device_1, _ = Device.objects.update_or_create(
+            device_name='Demo Mini Fan 1',
+            defaults={'type': type_fan, 'room': room_1b, 'status': False, 'threshold': None},
+        )
+        light_device_2, _ = Device.objects.update_or_create(
+            device_name='Demo Light 2',
+            defaults={'type': type_light, 'room': room_2a, 'status': False, 'threshold': None},
+        )
+        fan_device_2, _ = Device.objects.update_or_create(
+            device_name='Demo Mini Fan 2',
+            defaults={'type': type_fan, 'room': room_3a, 'status': False, 'threshold': None},
+        )
+
+        # Keep v7 sensor set and legacy fan room for backward-compatible demos.
         temp_device, _ = Device.objects.update_or_create(
             device_name='Demo Temp Sensor Device',
-            defaults={'type': type_temp, 'room': living_room, 'status': True, 'threshold': temp_threshold},
+            defaults={'type': type_temp, 'room': sensor_room, 'status': True, 'threshold': temp_threshold},
         )
         humid_device, _ = Device.objects.update_or_create(
             device_name='Demo Humidity Sensor Device',
-            defaults={'type': type_humidity, 'room': living_room, 'status': True, 'threshold': humid_threshold},
+            defaults={'type': type_humidity, 'room': sensor_room, 'status': True, 'threshold': humid_threshold},
         )
-        light_device, _ = Device.objects.update_or_create(
+        light_sensor_device, _ = Device.objects.update_or_create(
             device_name='Demo Light Sensor Device',
-            defaults={'type': type_light, 'room': living_room, 'status': True, 'threshold': light_threshold},
+            defaults={'type': type_light, 'room': sensor_room, 'status': True, 'threshold': light_threshold},
         )
-        fan_device, _ = Device.objects.update_or_create(
+        legacy_fan_device, _ = Device.objects.update_or_create(
             device_name='Demo Mini Fan',
-            defaults={'type': type_fan, 'room': living_room, 'status': False, 'threshold': None},
+            defaults={'type': type_fan, 'room': sensor_room, 'status': False, 'threshold': None},
         )
 
         # --- Schedule (room-based theo schema moi) ---
         Schedule.objects.get_or_create(
-            room=living_room,
+            room=room_3a,
             action='off',
             schedule_time=time(hour=22, minute=30),
             repeat_type='daily',
@@ -114,12 +143,12 @@ class Command(BaseCommand):
             action='turn_on_fan',
             defaults={'status': True, 'threshold': temp_threshold},
         )
-        IsMonitor.objects.get_or_create(device=fan_device, rule=rule)
+        IsMonitor.objects.get_or_create(device=fan_device_1, rule=rule)
 
         # --- Activity Log ---
         ActivityLog.objects.get_or_create(
             user=admin_user,
-            device=fan_device,
+            device=fan_device_1,
             action='seed_data_initialized',
         )
 

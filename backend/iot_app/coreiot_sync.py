@@ -60,6 +60,68 @@ def _get_device(device_id: str) -> Device | None:
         return None
 
 
+def _resolve_light_channel(device_id: int) -> dict:
+    light2_id = str(getattr(settings, "COREIOT_LOCAL_LIGHT_ACTUATOR_2_ID", "") or "").strip()
+    if light2_id and str(device_id) == light2_id:
+        return {
+            "telemetry_key": getattr(settings, "COREIOT_BRIGHTNESS_2_KEY", "brightness_2"),
+            "method": getattr(settings, "COREIOT_SETSTATE_METHOD_2", "setState2"),
+            "direct_key": getattr(settings, "COREIOT_BRIGHTNESS_2_KEY", "brightness_2"),
+        }
+    return {
+        "telemetry_key": getattr(settings, "COREIOT_BRIGHTNESS_KEY", "brightness"),
+        "method": getattr(settings, "COREIOT_SETSTATE_METHOD", "setState"),
+        "direct_key": getattr(settings, "COREIOT_BRIGHTNESS_KEY", "brightness"),
+    }
+
+
+def _resolve_fan_channel(device_id: int) -> dict:
+    fan2_id = str(getattr(settings, "COREIOT_LOCAL_FAN_ACTUATOR_2_ID", "") or "").strip()
+    if fan2_id and str(device_id) == fan2_id:
+        return {
+            "telemetry_key": getattr(settings, "COREIOT_FAN_SPEED_2_KEY", "fan_speed_2"),
+            "method": getattr(settings, "COREIOT_SETSTATE_VALUE_METHOD_2", "setValue2"),
+            "direct_key": getattr(settings, "COREIOT_FAN_SPEED_2_KEY", "fan_speed_2"),
+        }
+    return {
+        "telemetry_key": getattr(settings, "COREIOT_FAN_SPEED_KEY", "fan_speed"),
+        "method": getattr(settings, "COREIOT_SETSTATE_VALUE_METHOD", "setValue"),
+        "direct_key": getattr(settings, "COREIOT_FAN_SPEED_KEY", "fan_speed"),
+    }
+
+
+def _sync_actuator_from_telemetry(telemetry: dict[str, Any], device_id: str, expected_type: str, channel: dict, stale_limit: int) -> None:
+    telemetry_key = channel.get("telemetry_key")
+    if not telemetry_key or telemetry_key not in telemetry:
+        return
+
+    val = _to_int(telemetry.get(telemetry_key))
+    actuator = _get_device(device_id)
+    if val is None or actuator is None:
+        return
+
+    actuator_type = (getattr(actuator.type, "name_type", "") or "").lower()
+    valid_types = [expected_type]
+    if expected_type == "light":
+        valid_types.append("actuator")
+    if actuator_type not in valid_types:
+        logger.warning("Skip %s sync: mapped actuator is type=%s (device=%s)", expected_type, actuator_type, actuator.device_name)
+        return
+
+    now_ts = time.time()
+    last_cmd = _last_actuator_command_times.get(str(actuator.device_id), 0)
+    if now_ts - last_cmd < stale_limit:
+        return
+
+    normalized = _normalize_percent(val)
+    status = normalized > 0
+    if actuator.brightness != normalized or actuator.status != status:
+        actuator.brightness = normalized
+        actuator.status = status
+        actuator.save(update_fields=["brightness", "status"])
+        broadcast_device_status(actuator.device_id, status, actuator.device_name, normalized)
+
+
 def _upsert_sensor(device: Device, metric: str, value: float, unit: str) -> None:
     rounded_value = round(float(value), 2)
     latest = SensorData.objects.filter(device=device).first()
@@ -86,8 +148,6 @@ def sync_once() -> bool:
     telemetry = {key: entry.get("value") for key, entry in telemetry_entries.items()}
 
     # Mapping keys from settings
-    brightness_key = getattr(settings, "COREIOT_BRIGHTNESS_KEY", "brightness")
-    fan_speed_key = getattr(settings, "COREIOT_FAN_SPEED_KEY", "fan_speed")
     temperature_key = getattr(settings, "COREIOT_TEMPERATURE_KEY", "temperature")
     humidity_key = getattr(settings, "COREIOT_HUMIDITY_KEY", "humidity")
     light_key = getattr(settings, "COREIOT_LIGHT_KEY", "light")
@@ -95,61 +155,46 @@ def sync_once() -> bool:
     # Mapping device IDs from settings
     light_actuator_id = getattr(settings, "COREIOT_LOCAL_LIGHT_ACTUATOR_ID", "")
     fan_actuator_id = getattr(settings, "COREIOT_LOCAL_FAN_ACTUATOR_ID", "")
+    light_actuator_2_id = getattr(settings, "COREIOT_LOCAL_LIGHT_ACTUATOR_2_ID", "")
+    fan_actuator_2_id = getattr(settings, "COREIOT_LOCAL_FAN_ACTUATOR_2_ID", "")
     temp_sensor_id = getattr(settings, "COREIOT_LOCAL_TEMPERATURE_SENSOR_ID", "")
     humidity_sensor_id = getattr(settings, "COREIOT_LOCAL_HUMIDITY_SENSOR_ID", "")
     light_sensor_id = getattr(settings, "COREIOT_LOCAL_LIGHT_SENSOR_ID", "")
+    stale_limit = int(getattr(settings, "COREIOT_ACTUATOR_STALE_SECONDS", 15))
 
-    # Sync Light Actuator
-    if brightness_key in telemetry:
-        val = _to_int(telemetry.get(brightness_key))
-        actuator = _get_device(light_actuator_id)
-        if val is not None and actuator is not None:
-                actuator_type = (getattr(actuator.type, "name_type", "") or "").lower()
-                if actuator_type not in ["light", "actuator"]:
-                    logger.warning("Skip brightness sync: mapped light actuator is type=%s (device=%s)", actuator_type, actuator.device_name)
-                else:
-                    # Protection: Skip if a command was recently sent manually or via schedule
-                    now_ts = time.time()
-                    last_cmd = _last_actuator_command_times.get(str(actuator.device_id), 0)
-                    stale_limit = int(getattr(settings, "COREIOT_ACTUATOR_STALE_SECONDS", 15))
-                    
-                    if now_ts - last_cmd < stale_limit:
-                        # logger.debug("Skipping telemetry sync for %s (protection window)", actuator.device_name)
-                        pass
-                    else:
-                        normalized = _normalize_percent(val)
-                        status = normalized > 0
-                        if actuator.brightness != normalized or actuator.status != status:
-                            actuator.brightness = normalized
-                            actuator.status = status
-                            actuator.save(update_fields=["brightness", "status"])
-                            broadcast_device_status(actuator.device_id, status, actuator.device_name, normalized)
-
-
-    # Sync Fan Actuator
-    if fan_speed_key in telemetry:
-        val = _to_int(telemetry.get(fan_speed_key))
-        fan = _get_device(fan_actuator_id)
-        if val is not None and fan is not None:
-                fan_type = (getattr(fan.type, "name_type", "") or "").lower()
-                if fan_type != "fan":
-                    logger.warning("Skip fan sync: mapped fan actuator is type=%s (device=%s)", fan_type, fan.device_name)
-                else:
-                    # Protection: Skip if a command was recently sent
-                    now_ts = time.time()
-                    last_cmd = _last_actuator_command_times.get(str(fan.device_id), 0)
-                    stale_limit = int(getattr(settings, "COREIOT_ACTUATOR_STALE_SECONDS", 15))
-
-                    if now_ts - last_cmd < stale_limit:
-                        pass
-                    else:
-                        normalized = _normalize_percent(val)
-                        status = normalized > 0
-                        if fan.brightness != normalized or fan.status != status:
-                            fan.brightness = normalized
-                            fan.status = status
-                            fan.save(update_fields=["brightness", "status"])
-                            broadcast_device_status(fan.device_id, status, fan.device_name, normalized)
+    # Sync Light/Fan Actuators (primary + secondary channels)
+    if light_actuator_id:
+        _sync_actuator_from_telemetry(
+            telemetry,
+            light_actuator_id,
+            "light",
+            _resolve_light_channel(int(light_actuator_id)),
+            stale_limit,
+        )
+    if light_actuator_2_id:
+        _sync_actuator_from_telemetry(
+            telemetry,
+            light_actuator_2_id,
+            "light",
+            _resolve_light_channel(int(light_actuator_2_id)),
+            stale_limit,
+        )
+    if fan_actuator_id:
+        _sync_actuator_from_telemetry(
+            telemetry,
+            fan_actuator_id,
+            "fan",
+            _resolve_fan_channel(int(fan_actuator_id)),
+            stale_limit,
+        )
+    if fan_actuator_2_id:
+        _sync_actuator_from_telemetry(
+            telemetry,
+            fan_actuator_2_id,
+            "fan",
+            _resolve_fan_channel(int(fan_actuator_2_id)),
+            stale_limit,
+        )
 
 
     # Sync Sensors
@@ -235,9 +280,21 @@ def _check_schedules() -> None:
         for d in actuators:
             device_type = (getattr(d.type, "name_type", "") or "").lower()
             if device_type == "fan":
-                success = client.set_value(coreiot_device_id, target_value)
+                fan_channel = _resolve_fan_channel(d.device_id)
+                success = client.set_value(
+                    coreiot_device_id,
+                    target_value,
+                    method_name=fan_channel["method"],
+                    direct_key=fan_channel["direct_key"],
+                )
             else:
-                success = client.set_brightness(coreiot_device_id, target_value)
+                light_channel = _resolve_light_channel(d.device_id)
+                success = client.set_brightness(
+                    coreiot_device_id,
+                    target_value,
+                    method_name=light_channel["method"],
+                    direct_key=light_channel["direct_key"],
+                )
 
             if success:
                 record_actuator_command(d.device_id)

@@ -55,6 +55,32 @@ def _can_access_device(user, device):
     return RoomManagement.objects.filter(user=user, room_id=device.room_id).exists()
 
 
+def _resolve_light_channel(device_id: int) -> dict:
+    light2_id = str(getattr(settings, 'COREIOT_LOCAL_LIGHT_ACTUATOR_2_ID', '') or '').strip()
+    if light2_id and str(device_id) == light2_id:
+        return {
+            'method': getattr(settings, 'COREIOT_SETSTATE_METHOD_2', 'setState2'),
+            'direct_key': getattr(settings, 'COREIOT_BRIGHTNESS_2_KEY', 'brightness_2'),
+        }
+    return {
+        'method': getattr(settings, 'COREIOT_SETSTATE_METHOD', 'setState'),
+        'direct_key': getattr(settings, 'COREIOT_BRIGHTNESS_KEY', 'brightness'),
+    }
+
+
+def _resolve_fan_channel(device_id: int) -> dict:
+    fan2_id = str(getattr(settings, 'COREIOT_LOCAL_FAN_ACTUATOR_2_ID', '') or '').strip()
+    if fan2_id and str(device_id) == fan2_id:
+        return {
+            'method': getattr(settings, 'COREIOT_SETSTATE_VALUE_METHOD_2', 'setValue2'),
+            'direct_key': getattr(settings, 'COREIOT_FAN_SPEED_2_KEY', 'fan_speed_2'),
+        }
+    return {
+        'method': getattr(settings, 'COREIOT_SETSTATE_VALUE_METHOD', 'setValue'),
+        'direct_key': getattr(settings, 'COREIOT_FAN_SPEED_KEY', 'fan_speed'),
+    }
+
+
 class DeviceTypeListView(APIView):
     def get(self, request):
         types = DeviceType.objects.all()
@@ -179,8 +205,23 @@ class DeviceTurnOnView(APIView):
 
             publish_value = int(device.brightness) if int(device.brightness or 0) > 0 else 100
             client = CoreIoTClient()
+            channel = _resolve_light_channel(device.device_id) if device_type == 'light' else _resolve_fan_channel(device.device_id)
             try:
-                ok = client.set_brightness(coreiot_device_id, publish_value) if device_type == 'light' else client.set_value(coreiot_device_id, publish_value)
+                ok = (
+                    client.set_brightness(
+                        coreiot_device_id,
+                        publish_value,
+                        method_name=channel['method'],
+                        direct_key=channel['direct_key'],
+                    )
+                    if device_type == 'light'
+                    else client.set_value(
+                        coreiot_device_id,
+                        publish_value,
+                        method_name=channel['method'],
+                        direct_key=channel['direct_key'],
+                    )
+                )
             except Exception as e:
                 logger.error(f'CoreIoT turn on sync error: {e}')
                 ok = False
@@ -226,8 +267,23 @@ class DeviceTurnOffView(APIView):
                 )
 
             client = CoreIoTClient()
+            channel = _resolve_light_channel(device.device_id) if device_type == 'light' else _resolve_fan_channel(device.device_id)
             try:
-                ok = client.set_brightness(coreiot_device_id, 0) if device_type == 'light' else client.set_value(coreiot_device_id, 0)
+                ok = (
+                    client.set_brightness(
+                        coreiot_device_id,
+                        0,
+                        method_name=channel['method'],
+                        direct_key=channel['direct_key'],
+                    )
+                    if device_type == 'light'
+                    else client.set_value(
+                        coreiot_device_id,
+                        0,
+                        method_name=channel['method'],
+                        direct_key=channel['direct_key'],
+                    )
+                )
             except Exception as e:
                 logger.error(f'CoreIoT turn off sync error: {e}')
                 ok = False
@@ -277,8 +333,23 @@ class DeviceToggleView(APIView):
                 publish_value = int(device.brightness) if int(device.brightness or 0) > 0 else 100
 
             client = CoreIoTClient()
+            channel = _resolve_light_channel(device.device_id) if device_type == 'light' else _resolve_fan_channel(device.device_id)
             try:
-                ok = client.set_brightness(coreiot_device_id, publish_value) if device_type == 'light' else client.set_value(coreiot_device_id, publish_value)
+                ok = (
+                    client.set_brightness(
+                        coreiot_device_id,
+                        publish_value,
+                        method_name=channel['method'],
+                        direct_key=channel['direct_key'],
+                    )
+                    if device_type == 'light'
+                    else client.set_value(
+                        coreiot_device_id,
+                        publish_value,
+                        method_name=channel['method'],
+                        direct_key=channel['direct_key'],
+                    )
+                )
             except Exception as e:
                 logger.error(f'CoreIoT toggle sync error: {e}')
                 ok = False
@@ -355,7 +426,13 @@ class DeviceBrightnessView(APIView):
 
         try:
             logger.info(f'⚡ Publishing brightness to CoreIoT: device_id={coreiot_device_id}, value={publish_value}%')
-            ok = CoreIoTClient().set_brightness(coreiot_device_id, publish_value)
+            light_channel = _resolve_light_channel(device.device_id)
+            ok = CoreIoTClient().set_brightness(
+                coreiot_device_id,
+                publish_value,
+                method_name=light_channel['method'],
+                direct_key=light_channel['direct_key'],
+            )
         except Exception as e:
             logger.error(f'CoreIoT setState error: {e}')
             ok = False
@@ -435,7 +512,13 @@ class DeviceFanSpeedView(APIView):
 
         try:
             logger.info(f'⚡ Publishing fan speed to CoreIoT: device_id={coreiot_fan_device_id}, value={publish_value}%')
-            ok = CoreIoTClient().set_value(coreiot_fan_device_id, publish_value)
+            fan_channel = _resolve_fan_channel(device.device_id)
+            ok = CoreIoTClient().set_value(
+                coreiot_fan_device_id,
+                publish_value,
+                method_name=fan_channel['method'],
+                direct_key=fan_channel['direct_key'],
+            )
         except Exception as e:
             logger.error(f'CoreIoT setValue error: {e}')
             ok = False

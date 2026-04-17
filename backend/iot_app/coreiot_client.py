@@ -175,7 +175,14 @@ class CoreIoTClient:
         entries = self.fetch_latest_telemetry_entries(coreiot_device_id)
         return {key: entry.get("value") for key, entry in entries.items()}
 
-    def set_brightness(self, coreiot_device_id: str, brightness: int) -> bool:
+    def set_brightness(
+        self,
+        coreiot_device_id: str,
+        brightness: int,
+        *,
+        method_name: str | None = None,
+        direct_key: str | None = None,
+    ) -> bool:
         template = getattr(settings, "COREIOT_SETSTATE_URL_TEMPLATE", "").strip()
         if not template or not coreiot_device_id:
             
@@ -187,14 +194,14 @@ class CoreIoTClient:
 
         value = max(0, min(100, int(brightness)))
         mode = getattr(settings, "COREIOT_SETSTATE_MODE", "rpc").strip().lower()
-        brightness_key = getattr(settings, "COREIOT_BRIGHTNESS_KEY", "brightness")
+        brightness_key = direct_key or getattr(settings, "COREIOT_BRIGHTNESS_KEY", "brightness")
 
         if mode == "direct":
             body = {
                 brightness_key: value,
             }
         else:
-            method_name = getattr(settings, "COREIOT_SETSTATE_METHOD", "setState")
+            method_name = method_name or getattr(settings, "COREIOT_SETSTATE_METHOD", "setState")
             body = {
                 "method": method_name,
                 "params": value,
@@ -203,7 +210,14 @@ class CoreIoTClient:
         result = self._request("POST", url, body=body)
         return result is not None
 
-    def set_value(self, coreiot_device_id: str, value: int) -> bool:
+    def set_value(
+        self,
+        coreiot_device_id: str,
+        value: int,
+        *,
+        method_name: str | None = None,
+        direct_key: str | None = None,
+    ) -> bool:
         """Fan control - RPC method: setValue (0-100 percent)."""
         template = getattr(settings, "COREIOT_SETSTATE_URL_TEMPLATE", "").strip()
         if not template or not coreiot_device_id:
@@ -217,9 +231,9 @@ class CoreIoTClient:
         mode = getattr(settings, "COREIOT_SETSTATE_MODE", "rpc").strip().lower()
 
         if mode == "direct":
-            body = {"pwm": value}
+            body = {direct_key or "pwm": value}
         else:
-            method_name = getattr(settings, "COREIOT_SETSTATE_VALUE_METHOD", "setValue")
+            method_name = method_name or getattr(settings, "COREIOT_SETSTATE_VALUE_METHOD", "setValue")
             body = {
                 "method": method_name,
                 "params": value,

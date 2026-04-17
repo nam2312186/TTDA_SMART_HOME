@@ -36,7 +36,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onNavigate }) => {
   const avgTemp =
     temperatureSensors.length > 0
       ? temperatureSensors.reduce((sum, d) => sum + (d.currentValue || 0), 0) /
-        temperatureSensors.length
+      temperatureSensors.length
       : 0;
 
   const humiditySensors = devices.filter(
@@ -45,7 +45,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onNavigate }) => {
   const avgHumidity =
     humiditySensors.length > 0
       ? humiditySensors.reduce((sum, d) => sum + (d.currentValue || 0), 0) /
-        humiditySensors.length
+      humiditySensors.length
       : 0;
 
   // Recent alerts

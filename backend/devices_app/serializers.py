@@ -50,14 +50,11 @@ class DeviceSerializer(serializers.ModelSerializer):
             return True
         if type_name in ('fan', 'door', 'actuator'):
             return False
-        sensor_ids = [
-            str(getattr(settings, 'COREIOT_LOCAL_LIGHT_SENSOR_ID', '')).strip(),
-            str(getattr(settings, 'COREIOT_LOCAL_TEMPERATURE_SENSOR_ID', '')).strip(),
-            str(getattr(settings, 'COREIOT_LOCAL_HUMIDITY_SENSOR_ID', '')).strip(),
-        ]
-        sensor_ids = [sid for sid in sensor_ids if sid]
-        if str(obj.device_id) in sensor_ids:
-            return True
+        # Light can be either sensor or actuator in this system.
+        # Use threshold presence as the source of truth to avoid stale env ID mapping
+        # causing light actuators to be misclassified as sensors.
+        if type_name == 'light':
+            return bool(obj.threshold)
         return bool(obj.threshold)
 
     def get_threshold_data(self, obj):
