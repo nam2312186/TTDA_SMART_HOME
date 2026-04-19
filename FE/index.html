@@ -1,0 +1,30 @@
+
+  <!DOCTYPE html>
+  <html lang="en">
+    <head>
+      <meta charset="UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <title>Smart Home App Design</title>
+      <script>
+        window.onerror = function (msg, url, line, col, error) {
+          var errDiv = document.createElement("div");
+          errDiv.style.cssText = "position:absolute;top:0;left:0;width:100%;background:red;color:white;z-index:9999;padding:10px;font-size:14px;word-break:break-all;";
+          errDiv.innerHTML = "<b>LỖI JS:</b><br/>" + msg + "<br/>" + url + " (" + line + ":" + col + ")";
+          document.body.appendChild(errDiv);
+          return false;
+        };
+        window.onunhandledrejection = function(event) {
+          var errDiv = document.createElement("div");
+          errDiv.style.cssText = "position:absolute;top:0;left:0;width:100%;background:orange;color:black;z-index:9998;padding:10px;font-size:14px;word-break:break-all;";
+          errDiv.innerHTML = "<b>LỖI PROMISE:</b><br/>" + (event.reason ? event.reason.toString() : "Unknown");
+          document.body.appendChild(errDiv);
+        };
+      </script>
+    </head>
+
+    <body>
+      <div id="root"></div>
+      <script type="module" src="/src/main.tsx"></script>
+    </body>
+  </html>
+  
