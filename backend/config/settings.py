@@ -221,6 +221,10 @@ COREIOT_SCHEDULE_TIMEZONE = os.environ.get('COREIOT_SCHEDULE_TIMEZONE', 'Asia/Ho
 COREIOT_SCHEDULE_LOCAL_FALLBACK = os.environ.get('COREIOT_SCHEDULE_LOCAL_FALLBACK', 'True') == 'True'
 COREIOT_AUTO_SYNC_ON_RUNSERVER = os.environ.get('COREIOT_AUTO_SYNC_ON_RUNSERVER', 'True') == 'True'
 
+# Alert tuning (phút). Đặt thấp để FE nhận cảnh báo nhanh hơn khi giá trị vừa vượt ngưỡng.
+ALERT_COOLDOWN_MINUTES = _env_float('ALERT_COOLDOWN_MINUTES', 1)
+MAX_ALERT_RETENTION = int(os.environ.get('MAX_ALERT_RETENTION', 100))
+
 # ─── CORS - cho phép FE (Vite dev server) gọi BE ───────────────
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',

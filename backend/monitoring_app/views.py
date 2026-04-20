@@ -8,6 +8,7 @@ from django.conf import settings
 from .models import SensorData, Threshold, Alert
 from .serializers import ThresholdSerializer, SensorDataSerializer, AlertSerializer
 from devices_app.models import Device
+from iot_app.broadcast import broadcast_alert
 from users_app.models import User
 from building_app.models import RoomManagement
 
@@ -77,14 +78,16 @@ def _check_threshold(entry, source='system'):
     # Cooldown logic (5 mins)
     cooldown_mins = getattr(settings, 'ALERT_COOLDOWN_MINUTES', 5)
     cooldown_time = timezone.now() - timedelta(minutes=cooldown_mins)
+    message_prefix = f"Cảnh báo: {device.device_name}"
     recent_alert = Alert.objects.filter(
         threshold=threshold,
+        message__startswith=message_prefix,
         created_at__gte=cooldown_time
     ).exists()
 
     if not recent_alert:
-        msg = f"Cảnh báo: {device.device_name} giá trị {f_val} vượt ngưỡng!"
-        Alert.objects.create(
+        msg = f"{message_prefix} giá trị {f_val} vượt ngưỡng!"
+        alert = Alert.objects.create(
             threshold=threshold,
             message=msg,
             value=f_val,
@@ -92,6 +95,14 @@ def _check_threshold(entry, source='system'):
             # Wait, migration 0001 says Alert has [alert_id, value, message, created_at]. NO status field is shown in the migration operation I viewed.
             # BUT earlier viewed serializers used status. Let me re-verify migration 0001 Alert fields.
         )
+        # Push realtime alert ngay sau khi tạo để FE cập nhật tức thì.
+        broadcast_alert(
+            alert_id=alert.alert_id,
+            sensor_id=device.device_id,
+            message=msg,
+            device_id=device.device_id,
+        )
+
         # Prune old alerts
         max_alerts = getattr(settings, 'MAX_ALERT_RETENTION', 100)
         if Alert.objects.count() > max_alerts:

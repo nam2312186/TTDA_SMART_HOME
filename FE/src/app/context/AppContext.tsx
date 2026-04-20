@@ -453,6 +453,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => window.clearInterval(intervalId);
   }, [syncLatestSensorValues]);
 
+  // Fallback anti-miss cho alert: nếu websocket rớt/gãy ngắn hạn thì vẫn đồng bộ cảnh báo mới.
+  useEffect(() => {
+    if (!currentUser?.id) return;
+
+    const intervalId = window.setInterval(async () => {
+      try {
+        const alertsList = await alertsApi.list();
+        setAlerts((alertsList as any[]).map(mapAlert));
+      } catch {
+        // Ignore transient network/auth errors; websocket and fetchAll will retry.
+      }
+    }, 4000);
+
+    return () => window.clearInterval(intervalId);
+  }, [currentUser?.id]);
+
   // Global realtime bridge: cập nhật trực tiếp từ websocket để giảm độ trễ UI.
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -576,7 +592,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           reconnectTimer = window.setTimeout(() => {
             reconnectTimer = null;
             connect();
-          }, 2000);
+          }, 1000);
         }
       );
     };
