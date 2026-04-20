@@ -126,6 +126,8 @@ def _upsert_sensor(device: Device, metric: str, value: float, unit: str) -> None
     rounded_value = round(float(value), 2)
     latest = SensorData.objects.filter(device=device).first()
     if latest and float(latest.value) == rounded_value and str(latest.unit or "") == str(unit or ""):
+        # Dù value không đổi, vẫn chạy threshold check để không bị "báo 1 lần rồi im".
+        _check_threshold(latest, source="device")
         return
 
     entry = SensorData.objects.create(device=device, value=rounded_value, unit=unit)

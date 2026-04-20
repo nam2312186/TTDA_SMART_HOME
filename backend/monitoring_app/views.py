@@ -35,6 +35,15 @@ def _require_authenticated(request):
         return None, Response({'error': 'X-User-Id is required'}, status=status.HTTP_401_UNAUTHORIZED)
     return user, None
 
+
+def _is_value_violated(f_val: float, threshold: Threshold) -> bool:
+    is_violated = False
+    if threshold.min_value is not None and f_val < threshold.min_value:
+        is_violated = True
+    if threshold.max_value is not None and f_val > threshold.max_value:
+        is_violated = True
+    return is_violated
+
 def _check_threshold(entry, source='system'):
     """
     Tạo alert cho thiết bị đã cấu hình ngưỡng, có cooldown 5p.
@@ -54,11 +63,7 @@ def _check_threshold(entry, source='system'):
     except (TypeError, ValueError):
         return
 
-    is_violated = False
-    if threshold.min_value is not None and f_val < threshold.min_value:
-        is_violated = True
-    if threshold.max_value is not None and f_val > threshold.max_value:
-        is_violated = True
+    is_violated = _is_value_violated(f_val, threshold)
 
     if not is_violated:
         return
@@ -83,31 +88,41 @@ def _check_threshold(entry, source='system'):
         threshold=threshold,
         message__startswith=message_prefix,
         created_at__gte=cooldown_time
-    ).exists()
+    ).order_by('-created_at').first()
 
-    if not recent_alert:
-        msg = f"{message_prefix} giá trị {f_val} vượt ngưỡng!"
-        alert = Alert.objects.create(
-            threshold=threshold,
-            message=msg,
-            value=f_val,
-            # status='active' # Alert model has status field in migration 0001? 
-            # Wait, migration 0001 says Alert has [alert_id, value, message, created_at]. NO status field is shown in the migration operation I viewed.
-            # BUT earlier viewed serializers used status. Let me re-verify migration 0001 Alert fields.
+    # Nếu đã từng vượt ngưỡng nhưng sau đó có mẫu đo quay về bình thường,
+    # cho phép phát lại alert ngay cả khi vẫn còn trong cooldown.
+    if recent_alert:
+        samples_since_last_alert = SensorData.objects.filter(
+            device=device,
+            recorded_at__gt=recent_alert.created_at,
+        ).order_by('-recorded_at')[:30]
+        has_recovered = any(
+            not _is_value_violated(float(sample.value), threshold)
+            for sample in samples_since_last_alert
         )
-        # Push realtime alert ngay sau khi tạo để FE cập nhật tức thì.
-        broadcast_alert(
-            alert_id=alert.alert_id,
-            sensor_id=device.device_id,
-            message=msg,
-            device_id=device.device_id,
-        )
+        if not has_recovered:
+            return
 
-        # Prune old alerts
-        max_alerts = getattr(settings, 'MAX_ALERT_RETENTION', 100)
-        if Alert.objects.count() > max_alerts:
-            last_keep = Alert.objects.order_by('-created_at')[max_alerts-1].created_at
-            Alert.objects.filter(created_at__lt=last_keep).delete()
+    msg = f"{message_prefix} giá trị {f_val} vượt ngưỡng!"
+    alert = Alert.objects.create(
+        threshold=threshold,
+        message=msg,
+        value=f_val,
+    )
+    # Push realtime alert ngay sau khi tạo để FE cập nhật tức thì.
+    broadcast_alert(
+        alert_id=alert.alert_id,
+        sensor_id=device.device_id,
+        message=msg,
+        device_id=device.device_id,
+    )
+
+    # Prune old alerts
+    max_alerts = getattr(settings, 'MAX_ALERT_RETENTION', 100)
+    if Alert.objects.count() > max_alerts:
+        last_keep = Alert.objects.order_by('-created_at')[max_alerts-1].created_at
+        Alert.objects.filter(created_at__lt=last_keep).delete()
 
 class ThresholdListView(APIView):
     def get(self, request):
